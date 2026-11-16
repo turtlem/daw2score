@@ -1,0 +1,24 @@
+[project]
+name = "reaper-to-gp"
+version = "0.1.0"
+description = "Turn REAPER projects into Guitar Pro files (MIDI + audio transcription, bass cleanup, embedded audio track)"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "basic-pitch[onnx]",
+    "onnxruntime",
+    "pyguitarpro",
+    "soundfile",
+    "soxr",
+    "numpy<2",          # basic-pitch / resampy break on numpy 2
+    "setuptools<81",    # resampy still imports pkg_resources
+    "lxml>=6.1.3",
+]
+
+[tool.uv]
+package = false
+# basic-pitch pulls TensorFlow on Windows; TF 2.14 crashes with this numpy and is not needed
+# (the ONNX model is used instead), so keep it out of the environment.
+override-dependencies = [
+    "tensorflow ; sys_platform == 'never'",
+    "tensorflow-intel ; sys_platform == 'never'",
+]

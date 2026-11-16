@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.claude/
+.mcp.json
+gp_export_cache/
+*.gp
+*.gp5
+*.wav
+*.mp3
