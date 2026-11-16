@@ -24,11 +24,11 @@ uv sync
 
 ## Usage
 
-Save the REAPER project first: the scripts read the `.rpp` from disk. Track indices are 0-based, in REAPER's track order.
+Save the REAPER project first: the scripts read the `.rpp` from disk. Tracks are given by their REAPER name (case-insensitive); a folder track exports all its children. When two tracks share a name, pass the 0-based track index instead (`inspect_rpp.py` lists them).
 
 ```powershell
-# 1. Export drums (track 8) and bass (track 9) to Guitar Pro 5
-uv run python gp_export/export_gp.py "D:\Music\Song\Song.rpp" "D:\Music\Song\Song.gp5" 8 9
+# 1. Export the "Drums" and "Bass" tracks to Guitar Pro 5
+uv run python gp_export/export_gp.py "D:\Music\Song\Song.rpp" "D:\Music\Song\Song.gp5" Drums Bass
 
 # 2. Open the .gp5 in Guitar Pro 8 and save it as .gp, then clean the bass
 uv run python gp_export/clean_bass.py "D:\Music\Song\Song.gp" "D:\Music\Song\Song.rpp" --track Bass

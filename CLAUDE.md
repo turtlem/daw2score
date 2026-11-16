@@ -20,7 +20,7 @@ Python is managed by `uv`; `pyproject.toml` pins Python 3.11 for basic-pitch.
 
 ```powershell
 uv sync                                                # create .venv
-uv run python gp_export/export_gp.py <project.rpp> <out.gp5> <track_idx>... [--cache DIR] [--force]
+uv run python gp_export/export_gp.py <project.rpp> <out.gp5> <track name|idx>... [--cache DIR] [--force] [--drum-map JSON]
 uv run python gp_export/clean_bass.py <score.gp> <project.rpp> [--track Bass] [--out OUT.gp]
 uv run python gp_export/add_backing.py <score.gp> <project.rpp> "<rpp track name>"... [--name NAME] [--out OUT.gp]
 uv run python gp_export/inspect_rpp.py <project.rpp>   # tempo/TS map, markers, folder tree, items
