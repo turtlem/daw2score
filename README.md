@@ -48,7 +48,7 @@ Patterns written inside EZdrummer/EZkeys (their own song track) are not visible 
 - **Audio transcription is approximate.** Bass is usable after `clean_bass.py`; distorted guitars, clean/solo guitars and vocals are rough drafts at best. MIDI tracks are the reliable part.
 - **Everything is quantized to 16th notes** (triplets and flams are simplified).
 - **Constant tempo only.** Time-signature changes are supported, tempo changes are not.
-- **EZdrummer note map is approximate.** Standard GM notes (kick, snare, toms, cymbals) are exact. Toontrack-specific articulations (hi-hat variants such as notes 21, 22, 24–26, 60–64) are folded into closed/pedal/open hi-hat by guesswork, because Toontrack maps are kit-specific. Check your kit in EZdrummer (*Help > Show MIDI Mapping Layout*) and adjust `EZD_TO_GM` in `gp_export/build_gp.py`.
+- **Drum note map.** EZdrummer uses non-GM notes for articulations (hi-hat variants 12–26 and 60–64, ride edge on 52…). `gp_export/drum_maps/ezdrummer3.json` folds them into the GM notes Guitar Pro understands; it was inferred from EZdrummer 3's own groove database and articulation names, and each entry says where it comes from. Toontrack maps can differ per kit (e.g. 52 is China in the generic map but Ride Edge in some kits): copy the file, adjust it and pass `--drum-map my_kit.json`.
 - **GP5 has no notation-only staff**, so keys and vocals are written on 7-"string" pseudo-instruments; switch them to standard notation in Guitar Pro 7/8.
 - **Guitar Pro 8 audio track:** the format is undocumented; the layout follows [alphaTab](https://github.com/CoderLine/alphaTab)'s GPIF writer and was verified in Guitar Pro 8.1.4.
 

@@ -1,0 +1,23 @@
+{
+  "_about": "EZdrummer 3 note -> General MIDI note (what Guitar Pro expects on a percussion track). Notes not listed are passed through unchanged (36 kick, 38 snare, 40 rimshot, 37 sidestick, 41/43/45/47/48 toms, 49/57 crashes, 51 ride, 53 ride bell, 55 splash, 59 ride edge/crash).",
+  "_source": "Inferred from EZdrummer 3's groove database (%APPDATA%/Toontrack/EZdrummer 3/MidiDB: every groove lists the kit pieces it uses; a note belongs to the piece present in 100% of grooves containing it) and from the articulation names stored in .midtrackinfo files next to MIDI dragged out of EZdrummer. Toontrack maps can differ per kit: check yours in EZdrummer and override with --drum-map.",
+  "map": {
+    "12": {"gm": 42, "name": "Hi-Hat Closed (variant)"},
+    "13": {"gm": 46, "name": "Hi-Hat Open (variant)"},
+    "14": {"gm": 46, "name": "Hi-Hat Open (variant)"},
+    "15": {"gm": 46, "name": "Hi-Hat Open (variant)"},
+    "16": {"gm": 46, "name": "Hi-Hat Open (variant)"},
+    "21": {"gm": 44, "name": "Hi-Hat Pedal"},
+    "22": {"gm": 42, "name": "Hi-Hat Closed (edge)"},
+    "23": {"gm": 44, "name": "Hi-Hat Pedal (variant)"},
+    "24": {"gm": 46, "name": "Hi-Hat Open Edge 1"},
+    "25": {"gm": 46, "name": "Hi-Hat Open Edge 2"},
+    "26": {"gm": 46, "name": "Hi-Hat Open Edge 3"},
+    "52": {"gm": 59, "name": "Ride Edge (China in Toontrack's generic map; this kit names it Ride Edge)"},
+    "60": {"gm": 46, "name": "Hi-Hat Open (variant)"},
+    "61": {"gm": 42, "name": "Hi-Hat Closed (variant)"},
+    "62": {"gm": 42, "name": "Hi-Hat Tight Edge"},
+    "63": {"gm": 42, "name": "Hi-Hat Closed (variant)"},
+    "64": {"gm": 42, "name": "Hi-Hat Closed/Open (ambiguous)"}
+  }
+}

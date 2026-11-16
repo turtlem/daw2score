@@ -11,9 +11,13 @@ import rpp
 SLOTS_PER_QN = 4  # 16th-note grid
 MAX_DRUM_SLOTS = 8
 
-# EZdrummer -> GM. Non-GM Toontrack articulations folded into the hi-hat family (best guess, see report).
-EZD_TO_GM = {62: 42, 22: 42, 12: 42, 13: 42, 14: 42, 21: 44,
-             63: 46, 64: 46, 60: 46, 61: 46, 24: 46, 25: 46, 26: 46}
+DEFAULT_DRUM_MAP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "drum_maps", "ezdrummer3.json")
+
+
+def load_drum_map(path=None):
+    """Drum-plugin note -> GM note, from a drum_maps/*.json file (see ezdrummer3.json)."""
+    with open(path or DEFAULT_DRUM_MAP, encoding="utf-8") as f:
+        return {int(k): int(v["gm"]) for k, v in json.load(f)["map"].items()}
 
 TUNINGS = {
     "bass4": [43, 38, 33, 28], "bass5": [43, 38, 33, 28, 23],
@@ -258,7 +262,8 @@ def main():
     run(sys.argv[1], sys.argv[2], sys.argv[3], [int(a) for a in sys.argv[4:]])
 
 
-def run(proj_path, tdir, out_path, sel):
+def run(proj_path, tdir, out_path, sel, drum_map=None):
+    drum_to_gm = load_drum_map(drum_map)
     proj = rpp.parse(proj_path)
     info = rpp.project_info(proj)
     bpm = info["tempo"]
@@ -309,7 +314,7 @@ def run(proj_path, tdir, out_path, sel):
         tname = name if names[name] == 1 else f"{name} ({names[name]})"
         if is_drum:
             for n in notes:
-                n["pitch"] = EZD_TO_GM.get(n["pitch"], n["pitch"])
+                n["pitch"] = drum_to_gm.get(n["pitch"], n["pitch"])
             track = gp.Track(song, number=n_t + 1, name=tname, isPercussionTrack=True,
                              strings=[gp.GuitarString(i + 1, 0) for i in range(6)],
                              port=1, channel=gp.MidiChannel(channel=9, effectChannel=9, instrument=0))

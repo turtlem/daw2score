@@ -20,6 +20,7 @@ def main():
     ap.add_argument("tracks", nargs="+", type=int)
     ap.add_argument("--cache")
     ap.add_argument("--force", action="store_true", help="overwrite the output file")
+    ap.add_argument("--drum-map", help="drum note map JSON (default gp_export/drum_maps/ezdrummer3.json)")
     a = ap.parse_args()
 
     if os.path.exists(a.out) and not a.force:
@@ -35,7 +36,7 @@ def main():
     if audio:
         print("transcribing audio tracks:", audio, flush=True)
         transcribe.run(a.project, cache, audio)
-    build_gp.run(a.project, cache, a.out, a.tracks)
+    build_gp.run(a.project, cache, a.out, a.tracks, drum_map=a.drum_map)
 
 
 if __name__ == "__main__":

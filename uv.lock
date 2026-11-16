@@ -664,7 +664,7 @@ wheels = [
 ]
 
 [[package]]
-name = "reaper-tools"
+name = "reaper-to-gp"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
