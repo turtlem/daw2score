@@ -1,17 +1,35 @@
-"""REAPER project -> Guitar Pro 5, in one command.
+"""REAPER project -> Guitar Pro 7/8 (.gp) or Guitar Pro 5 (.gp5), in one command.
 
-usage: export_gp.py <project.rpp> <out.gp5> <track> [<track> ...] [--cache DIR] [--force] [--drum-map JSON]
+usage: export_gp.py <project.rpp> <out.gp|out.gp5> <track> [<track> ...]
+                    [--cache DIR] [--force] [--drum-map JSON] [--tempo BPM] [--section BAR=NAME ...]
+                    [--chords NAME=trackA+trackB] [--harmony trackA+trackB] [--clean-bass]
 
 Each <track> is a track name as shown in REAPER (case-insensitive, must be unique) or a 0-based
 track index (as returned by the reaper MCP get_selected_tracks). Folder tracks are expanded to
 their children. MIDI tracks are read from the .rpp; audio tracks are transcribed with basic-pitch
 (results cached per track index in --cache, default <project dir>/gp_export_cache; delete a
 <idx>.json there to force re-transcription).
+
+"NAME=trackA+trackB" writes several audio tracks as ONE Guitar Pro track (e.g. a lead vocal split
+over several tracks by section). A drum folder made of audio mics (name contains "drum"/"batterie",
+no MIDI inside) is transcribed by drums_audio.py into one percussion track.
+
+--tempo overrides the project tempo (audio recorded to a click while the project kept REAPER's
+default 120 BPM; see detect_tempo.py). --section 20="Couplet 1" sets section markers by bar number
+instead of the project markers.
+
+--chords writes a rhythm guitar as strummed chords with chord names instead of transcribed notes:
+the chords are detected from the --harmony tracks (default: the --chords tracks) plus the bass
+tracks, the rhythm comes from the --chords tracks' attacks (see harmony.py). --clean-bass cleans
+transcribed bass lines (octaves, leaps, passing-note parasites; see bass_fix.py).
+
+A .gp output is built as GP5 and converted with alphaTab (Node.js, gp_export/gp7; npm ci runs on
+first use). Only .gp files can then get an audio track (add_backing.py) or clean_bass.py.
 """
-import argparse, os, sys
+import argparse, os, re, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import rpp, transcribe, build_gp
+import rpp, transcribe, build_gp, drums_audio, harmony
 
 
 def resolve_tracks(trs, specs):
@@ -33,32 +51,119 @@ def resolve_tracks(trs, specs):
     return out
 
 
+def is_audio_drum_folder(trs, t):
+    if not t["is_folder"] or not re.search(r"drum|batterie", t["name"], re.I):
+        return False
+    kids = build_gp.expand_selection(trs, [t["index"]])
+    return not any(i.get("src_type") == "MIDI" for k in kids for i in rpp.items(k["node"]))
+
+
+def parse_sections(items):
+    out = {}
+    for it in items or []:
+        bar, _, name = it.partition("=")
+        if not bar.strip().isdigit() or not name.strip():
+            sys.exit(f"--section expects BAR=NAME, got {it!r}")
+        out[int(bar)] = name.strip()
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("project")
     ap.add_argument("out")
-    ap.add_argument("tracks", nargs="+", help="track names or 0-based indices")
+    ap.add_argument("tracks", nargs="+", help='track names or 0-based indices, or "NAME=trackA+trackB"')
     ap.add_argument("--cache")
     ap.add_argument("--force", action="store_true", help="overwrite the output file")
     ap.add_argument("--drum-map", help="drum note map JSON (default gp_export/drum_maps/ezdrummer3.json)")
+    ap.add_argument("--tempo", type=float, help="BPM overriding the project tempo")
+    ap.add_argument("--section", action="append", metavar="BAR=NAME", help="section marker at a bar (repeatable)")
+    ap.add_argument("--chords", action="append", metavar="NAME=trackA+trackB", help="chord track (repeatable)")
+    ap.add_argument("--harmony", metavar="trackA+trackB", help="tracks used to detect the chords")
+    ap.add_argument("--clean-bass", action="store_true", help="clean transcribed bass tracks")
     a = ap.parse_args()
 
     if os.path.exists(a.out) and not a.force:
         sys.exit(f"{a.out} already exists (use --force to overwrite)")
     cache = a.cache or os.path.join(os.path.dirname(os.path.abspath(a.project)), "gp_export_cache")
+    sections = parse_sections(a.section)
 
     proj = rpp.parse(a.project)
     trs = rpp.tracks(proj)
-    sel = resolve_tracks(trs, a.tracks)
+    sel, groups, drum_folders = [], [], []
+    for spec in a.tracks:
+        if "+" in spec or "=" in spec:
+            name, _, members = spec.rpartition("=") if "=" in spec else ("", "", spec)
+            idxs = resolve_tracks(trs, [m for m in members.split("+") if m])
+            groups.append((name or trs[idxs[0]]["name"], idxs))
+            continue
+        i = resolve_tracks(trs, [spec])[0]
+        if is_audio_drum_folder(trs, trs[i]):
+            drum_folders.append(i)
+            groups.append((trs[i]["name"], [i]))
+        else:
+            sel.append(i)
+
     audio = []
-    for t in build_gp.expand_selection(trs, sel):
+    group_tracks = [trs[i] for _, idxs in groups for i in idxs if i not in drum_folders]
+    for t in build_gp.expand_selection(trs, sel) + group_tracks:
         its = rpp.items(t["node"])
         if not any(i.get("src_type") == "MIDI" and not i["mute"] for i in its) and any(i.get("file") for i in its):
             audio.append(t["index"])
     if audio:
         print("transcribing audio tracks:", audio, flush=True)
         transcribe.run(a.project, cache, audio)
-    build_gp.run(a.project, cache, a.out, sel, drum_map=a.drum_map)
+    for i in drum_folders:
+        drums_audio.run(a.project, cache, i)
+
+    bpm = a.tempo or rpp.project_info(proj)["tempo"]
+    chord_specs = []
+    for spec in a.chords or []:
+        name, _, members = spec.rpartition("=")
+        chord_specs.append((name or members, resolve_tracks(trs, [m for m in members.split("+") if m])))
+    chord_tracks, labels = [], None
+    if chord_specs or a.clean_bass:
+        exported = [t["index"] for t in build_gp.expand_selection(trs, sel)] + [i for _, ix in groups for i in ix]
+        bass = [i for i in exported if re.search(r"bass|basse", trs[i]["name"], re.I)]
+        chord_idxs = [i for _, ix in chord_specs for i in ix]
+        harm = resolve_tracks(trs, [m for m in a.harmony.split("+") if m]) if a.harmony else chord_idxs
+        if harm:
+            print("detecting chords from", [trs[i]["name"] for i in harm], "+ bass", [trs[i]["name"] for i in bass], flush=True)
+            labels, _ = harmony.detect(a.project, harm, bass, bpm, chord_idxs)
+            prog = []
+            for k in range(0, len(labels), 4):
+                bar = " ".join(dict.fromkeys(labels[k:k + 4]))
+                prog.append(f"{k // 4 + 1}:{bar}")
+            print("chords per bar:", " | ".join(prog))
+        for name, ix in chord_specs:
+            ons = harmony.strums(a.project, ix, bpm, build_gp.SLOTS_PER_QN)
+            chord_tracks.append((name, harmony.chord_events(labels, build_gp.SLOTS_PER_QN, ons)))
+    gp7 = a.out.lower().endswith(".gp")
+    gp5_out = os.path.splitext(a.out)[0] + ".tmp.gp5" if gp7 else a.out
+    build_gp.run(a.project, cache, gp5_out, sel, drum_map=a.drum_map, tempo=a.tempo,
+                 sections=sections, groups=groups, chord_tracks=chord_tracks, chord_labels=labels,
+                 clean_bass=a.clean_bass)
+    if gp7:
+        try:
+            to_gp7(gp5_out, a.out)
+        finally:
+            os.remove(gp5_out)
+
+
+def to_gp7(src, dst):
+    """GP5 -> Guitar Pro 7/8 .gp through alphaTab (Node.js, gp_export/gp7)."""
+    import shutil, subprocess
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gp7")
+    node = shutil.which("node")
+    if not node:
+        sys.exit("writing .gp needs Node.js (https://nodejs.org); or write a .gp5")
+    if not os.path.isdir(os.path.join(here, "node_modules", "@coderline", "alphatab")):
+        subprocess.run([shutil.which("npm") or "npm", "ci", "--no-audit", "--no-fund"], cwd=here, check=True)
+    subprocess.run([node, os.path.join(here, "gp5togp.mjs"), os.path.abspath(src), os.path.abspath(dst)],
+                   cwd=here, check=True)
+    import gpif
+    sc = gpif.Score(dst)  # re-read to make sure the file is well-formed
+    print(f"written {dst} (Guitar Pro 7/8): {len(sc.root.find('Tracks').findall('Track'))} tracks")
 
 
 if __name__ == "__main__":

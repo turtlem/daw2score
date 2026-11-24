@@ -6,7 +6,7 @@ import collections, json, os, sys
 import guitarpro as gp
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import rpp
+import rpp, transcribe
 
 SLOTS_PER_QN = 4  # 16th-note grid
 MAX_DRUM_SLOTS = 8
@@ -206,9 +206,20 @@ def decompose(n):
     return out
 
 
+def chord_diagram(name, nts):
+    """gp.Chord (name + diagram) from [(string_no, fret, vel)], string 1 = high e."""
+    frets = [-1] * 7
+    for st, fr, _ in nts:
+        frets[st - 1] = fr
+    played = [f for f in frets if f > 0]
+    first = max(1, min(played)) if played and max(played) > 4 else 1
+    return gp.Chord(length=6, name=name, strings=frets, firstFret=first, sharp=False, add=False,
+                    show=True, newFormat=True)
+
+
 def fill_track(track, measures, chords, assign):
     """chords: list of {s,e,notes}; assign(chord)->[(string,fret,vel)]"""
-    assigned = [(c["s"], c["e"], assign(c)) for c in chords]
+    assigned = [(c["s"], c["e"], assign(c), c.get("label")) for c in chords]
     assigned = [a for a in assigned if a[2]]
     ai = 0
     for m, gm in zip(measures, track.measures):
@@ -219,10 +230,10 @@ def fill_track(track, measures, chords, assign):
         k = ai
         pieces = []
         while k < len(assigned) and assigned[k][0] < m["s1"]:
-            s, e, nts = assigned[k]
-            pieces.append((max(s, m["s0"]), min(e, m["s1"]), nts, s < m["s0"]))
+            s, e, nts, label = assigned[k]
+            pieces.append((max(s, m["s0"]), min(e, m["s1"]), nts, s < m["s0"], label))
             k += 1
-        for s, e, nts, tied in pieces:
+        for s, e, nts, tied, label in pieces:
             if s > cursor:
                 for _, val, dot in decompose(s - cursor):
                     voice.beats.append(gp.Beat(voice, duration=gp.Duration(val, dot), status=gp.BeatStatus.rest))
@@ -233,6 +244,8 @@ def fill_track(track, measures, chords, assign):
                 for st, fr, vel in nts:
                     b.notes.append(gp.Note(b, value=fr, velocity=vel, string=st,
                                            type=gp.NoteType.tie if is_tie else gp.NoteType.normal))
+                if label and first and not tied:
+                    b.effect.chord = chord_diagram(label, nts)
                 voice.beats.append(b)
                 first = False
             cursor = e
@@ -262,14 +275,42 @@ def main():
     run(sys.argv[1], sys.argv[2], sys.argv[3], [int(a) for a in sys.argv[4:]])
 
 
-def run(proj_path, tdir, out_path, sel, drum_map=None):
+def run(proj_path, tdir, out_path, sel, drum_map=None, tempo=None, sections=None, groups=None,
+        chord_tracks=None, chord_labels=None, clean_bass=False):
+    """sel: track indices (folders expanded). groups: [(name, [indices])] each written as ONE track from
+    the cached transcriptions of its tracks (a drum folder transcribed by drums_audio.py is a group of
+    one: its folder index). tempo: BPM overriding the project's (for audio recorded to a click while
+    the project kept REAPER's default tempo). sections: {bar number (1-based): name}, replacing the
+    project markers. chord_tracks: [(name, events from harmony.chord_events)] written as strummed
+    chords with chord names. clean_bass: run bass_fix.fix on bass tracks (chord_labels = per-beat chord
+    names from harmony.detect, used to judge passing notes)."""
     drum_to_gm = load_drum_map(drum_map)
     proj = rpp.parse(proj_path)
     info = rpp.project_info(proj)
+    if tempo:
+        if info["tempo_points"]:
+            print("WARNING: --tempo ignores the project's tempo map")
+        info["tempo"], info["tempo_points"] = float(tempo), []
     bpm = info["tempo"]
-    trs = expand_selection(rpp.tracks(proj), sel)
+    all_trs = rpp.tracks(proj)
+    trs = expand_selection(all_trs, sel)
 
     specs = []  # (name, kind, notes, is_drum)
+    spec_idxs = {}
+    for name, idxs in groups or []:
+        spec_idxs[name] = idxs
+        notes, kind = [], None
+        for i in idxs:
+            ns, prof = audio_notes(tdir, i, bpm)
+            if ns:
+                notes += ns
+                kind = kind or prof["kind"]
+        if not notes:
+            print(f"skip group {name!r}: no notes")
+            continue
+        notes.sort(key=lambda n: (n["start"], n["pitch"]))
+        # "drums_audio" = already GM (from drums_audio.py), so no plugin note map
+        specs.append((name, "drums_audio" if kind == "drums" else kind, notes, kind == "drums"))
     for t in trs:
         its = rpp.items(t["node"])
         has_midi = any(i.get("src_type") == "MIDI" and not i["mute"] for i in its)
@@ -289,14 +330,32 @@ def run(proj_path, tdir, out_path, sel, drum_map=None):
                 specs.append((t["name"], prof["kind"], notes, False))
             else:
                 print(f'skip [{t["index"]}] {t["name"]}: no notes')
+            spec_idxs[t["name"]] = [t["index"]]
 
-    end_qn = max(n["end"] for _, _, ns, _ in specs for n in ns) + 0.01
+    if clean_bass:
+        import bass_fix
+        kicks = {round(n["start"] * SLOTS_PER_QN) for _, _, ns, d in specs if d for n in ns if n["pitch"] in (35, 36)}
+        pdir = os.path.dirname(os.path.abspath(proj_path))
+        for k, (name, kind, notes, is_drum) in enumerate(specs):
+            if kind != "bass":
+                continue
+            its = [i for ix in spec_idxs.get(name, []) for i in rpp.items(all_trs[ix]["node"])]
+            buf, t0 = transcribe.render(pdir, its) if its else (None, 0.0)
+            fixed, st = bass_fix.fix(notes, buf, t0, bpm, SLOTS_PER_QN, kicks, chord_labels)
+            print(f"bass cleanup {name!r}: {len(notes)} -> {len(fixed)} notes {st}")
+            specs[k] = (name, kind, fixed, is_drum)
+    for name, events in chord_tracks or []:
+        specs.append((name, "chords", events, False))
+
+    end_qn = max((n["end"] if "end" in n else n["e"] / SLOTS_PER_QN) for _, _, ns, _ in specs for n in ns) + 0.01
     measures = build_measures(info, end_qn)
 
     song = gp.Song(title=os.path.splitext(os.path.basename(proj_path))[0], tempo=int(round(bpm)))
     song.measureHeaders = []
     song.tracks = []
     marker_qn = {round(t * bpm / 60.0 * SLOTS_PER_QN): name for t, name in info["markers"]}
+    if sections:
+        marker_qn = {measures[b - 1]["s0"]: name for b, name in sections.items() if 0 < b <= len(measures)}
     tick = 960
     for i, m in enumerate(measures):
         h = gp.MeasureHeader(number=i + 1, start=tick,
@@ -313,8 +372,9 @@ def run(proj_path, tdir, out_path, sel, drum_map=None):
         names[name] += 1
         tname = name if names[name] == 1 else f"{name} ({names[name]})"
         if is_drum:
-            for n in notes:
-                n["pitch"] = drum_to_gm.get(n["pitch"], n["pitch"])
+            if kind != "drums_audio":
+                for n in notes:
+                    n["pitch"] = drum_to_gm.get(n["pitch"], n["pitch"])
             track = gp.Track(song, number=n_t + 1, name=tname, isPercussionTrack=True,
                              strings=[gp.GuitarString(i + 1, 0) for i in range(6)],
                              port=1, channel=gp.MidiChannel(channel=9, effectChannel=9, instrument=0))
@@ -324,6 +384,19 @@ def run(proj_path, tdir, out_path, sel, drum_map=None):
                 return [(i + 1, n["pitch"], n["vel"]) for i, n in enumerate(sorted(c["notes"], key=lambda n: n["pitch"])[:6])]
             tun = "percussion"
             fretter = None
+        elif kind == "chords":
+            tun = "gtr"
+            fretter = None
+            port, ch = chan_pool.pop(0)
+            track = gp.Track(song, number=n_t + 1, name=tname,
+                             strings=[gp.GuitarString(i + 1, v) for i, v in enumerate(TUNINGS["gtr"])],
+                             port=port, channel=gp.MidiChannel(channel=ch, effectChannel=ch, instrument=GM_PROGRAM["gtr_clean"]))
+            chords = [{"s": ev["s"], "e": ev["e"], "notes": [], "ev": ev,
+                       "label": ev["name"] if ev["first"] else None} for ev in notes]
+
+            def assign(c):
+                fr = c["ev"]["frets"]  # low E -> high e; GP string 1 = high e
+                return [(6 - i, f, c["ev"]["vel"]) for i, f in enumerate(fr) if f >= 0]
         else:
             max_poly = {"bass": 1, "gtr_solo": 1, "vocal": 1, "gtr_heavy": 3, "gtr_clean": 6}.get(kind, 7)
             tun = pick_tuning(kind, [n["pitch"] for n in notes])

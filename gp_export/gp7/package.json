@@ -1,0 +1,9 @@
+{
+  "name": "reaper-to-gp-gp7",
+  "private": true,
+  "description": "GP5 -> Guitar Pro 7/8 (.gp) conversion with alphaTab",
+  "type": "module",
+  "dependencies": {
+    "@coderline/alphatab": "1.8.4"
+  }
+}

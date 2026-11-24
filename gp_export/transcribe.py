@@ -22,9 +22,9 @@ def profile(name):
         return dict(kind="gtr_solo", fmin=75, fmax=1700, onset=0.5, frame=0.3, min_len=70, max_poly=1)
     if "clean" in n:
         return dict(kind="gtr_clean", fmin=75, fmax=1400, onset=0.5, frame=0.3, min_len=90, max_poly=6)
-    if "gtr" in n or "guit" in n:
+    if "gtr" in n or "guit" in n or re.search(r"\bgt\b", n):
         return dict(kind="gtr_heavy", fmin=70, fmax=1000, onset=0.6, frame=0.35, min_len=90, max_poly=3)
-    if "chant" in n or "vocal" in n or "voix" in n:
+    if "chant" in n or "vocal" in n or "voix" in n or re.search(r"\bvx\b", n):
         return dict(kind="vocal", fmin=70, fmax=1100, onset=0.5, frame=0.3, min_len=110, max_poly=1)
     return dict(kind="other", fmin=30, fmax=2000, onset=0.5, frame=0.3, min_len=90, max_poly=6)
 

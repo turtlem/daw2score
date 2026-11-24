@@ -8,3 +8,4 @@ gp_export_cache/
 *.gp5
 *.wav
 *.mp3
+node_modules/

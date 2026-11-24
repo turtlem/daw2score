@@ -16,11 +16,12 @@ reaper_to_gp: tools that turn REAPER (DAW) projects into Guitar Pro files, on Wi
 
 ## Environment & commands
 
-Python is managed by `uv`; `pyproject.toml` pins Python 3.11 for basic-pitch.
+Python is managed by `uv`; `pyproject.toml` pins Python 3.11 for basic-pitch. Writing `.gp` needs Node.js: `gp_export/gp7` holds a pinned alphaTab (`npm ci` on first use, `node_modules` git-ignored). The user wants `.gp` output only, never leftover `.gp5`.
 
 ```powershell
 uv sync                                                # create .venv
-uv run python gp_export/export_gp.py <project.rpp> <out.gp5> <track name|idx>... [--cache DIR] [--force] [--drum-map JSON]
+uv run python gp_export/export_gp.py <project.rpp> <out.gp> <track name|idx|NAME=a+b>... [--cache DIR] [--force] [--drum-map JSON]
+        [--tempo BPM] [--section BAR=NAME]... [--chords NAME=a+b] [--harmony a+b+c] [--clean-bass]
 uv run python gp_export/clean_bass.py <score.gp> <project.rpp> [--track Bass] [--out OUT.gp]
 uv run python gp_export/add_backing.py <score.gp> <project.rpp> "<rpp track name>"... [--name NAME] [--out OUT.gp]
 uv run python gp_export/inspect_rpp.py <project.rpp>   # tempo/TS map, markers, folder tree, items
@@ -33,7 +34,7 @@ There are no tests. Each writer validates its own output: `build_gp.py` re-parse
 
 ## gp_export architecture
 
-Pipeline: REAPER track selection → notes in quarter-note time → 16th-note grid chords → Guitar Pro 5 via PyGuitarPro; then optional in-place post-processing of the GP7/8 `.gp` the user saves from Guitar Pro.
+Pipeline: REAPER track selection → notes in quarter-note time → 16th-note grid chords → Guitar Pro 5 via PyGuitarPro → (for a `.gp` output) GP7/8 through alphaTab's `Gp7Exporter` (`gp7/gp5togp.mjs`, temp `.tmp.gp5` deleted); then optional in-place post-processing of the `.gp`.
 
 - `rpp.py` — minimal `.rpp` parser. Child chunks are also recorded inline in `Node.lines` as `["<CHILD>", node]` so multi-take items can be split on `TAKE` lines; the active take is the one whose `TAKE` line has `SEL` (else take 0). Folder depth comes from `ISBUS <flag> <delta>`. Time signatures live in `TEMPOENVEX` `PT` lines, field 3 = `(den << 16) | num`.
 - `transcribe.py` — rebuilds each audio track from its items (source file, `SOFFS`, playrate, loop) into one mono 22.05 kHz buffer, runs basic-pitch with a per-instrument profile chosen from the track name (`profile()`), and caches `<idx>.json` (times in seconds). Delete a cached json to re-transcribe.
@@ -41,5 +42,9 @@ Pipeline: REAPER track selection → notes in quarter-note time → 16th-note gr
 - In practice only drums (MIDI) and bass (transcribed, then `clean_bass.py`) came out usable; transcribed distorted/clean/solo guitars, vocals and the keys split were judged barely usable. Don't oversell audio transcription beyond bass; default to MIDI + bass unless asked.
 - `gpif.py` — read/rewrite one single-voice stringed track in a GP7/8 `.gp` (zip + `Content/score.gpif`, via lxml to keep CDATA). GP8 shares identical Beat/Note elements between positions, so `rewrite_track` always creates fresh elements and prunes orphans; containers contain XML comments, so use `findall(tag)`. GPIF `String` is 0-based from the lowest string, `Midi` is the real pitch.
 - `clean_bass.py` — post-processes a transcribed bass in a `.gp`: octave fix by checking odd-harmonic energy of the lower octave in the bass audio rebuilt from the `.rpp` (threshold `OCT_RATIO`), fragment merge unless re-attack on a kick, removal of quiet off-kick 16ths (`PARASITE_AMP`, needs the transcription cache), re-fretting. Writes `<name>.before-bass-cleanup.gp` before overwriting. Typical effect: ~20% fewer notes, octave fixes on most notes reported an octave too high.
-- `add_backing.py` — embeds a mix of named `.rpp` tracks as the GP8 audio track (GP8 allows only one): stereo 44.1 kHz MP3 from project time 0 at `Content/Assets/backing-track.mp3`, `BackingTrack` after `MasterTrack`, `Assets` after `MasterBars`, SyncPoints (frames @ 44.1 kHz) at first/last bar. Element layout copied from alphaTab's `GpifWriter.ts` (no official spec); verified to open and play in Guitar Pro 8.1.4. Backup `<name>.before-backing.gp`.
-- `export_gp.py` — orchestrator: expands selected folders, transcribes audio tracks (cache default `<project dir>/gp_export_cache`), then builds. Refuses to overwrite without `--force`.
+- `add_backing.py` — uses the score's tempo automation (not the project's) for the sync points; embeds a mix of named `.rpp` tracks as the GP8 audio track (GP8 allows only one): stereo 44.1 kHz MP3 from project time 0 at `Content/Assets/backing-track.mp3`, `BackingTrack` after `MasterTrack`, `Assets` after `MasterBars`, SyncPoints (frames @ 44.1 kHz) at first/last bar. Element layout copied from alphaTab's `GpifWriter.ts` (no official spec); verified to open and play in Guitar Pro 8.1.4. Backup `<name>.before-backing.gp`.
+- `export_gp.py` — orchestrator: expands selected folders, transcribes audio tracks (cache default `<project dir>/gp_export_cache`), then builds. Refuses to overwrite without `--force`. `NAME=a+b` = groups (several tracks → one GP track, e.g. a lead vocal split by section); an audio-only folder named drum/batterie goes to `drums_audio.py`.
+- Multitrack recordings imported into REAPER usually keep the default 120 BPM with no markers. Detect the real tempo before exporting (librosa beat tracking on the kick/snare/hh mics, then a linear fit: a residual of ~20 ms means it was recorded to a click from time 0) and pass `--tempo`; propose sections from per-bar instrument activity and pass `--section`.
+- `drums_audio.py` — onset detection per close mic on a band-limited signal; bleed rejected by comparing each hit's level ratio to a reference mic against the median ratio (`ratio_k`). Hi-hat open = long high-band decay (longer when a snare hit coincides); crash = long decay in the overheads. Output = cache json with profile kind `drums` (already GM, the plugin drum map is skipped).
+- `harmony.py` — beat-synchronous chroma of the harmony tracks (loudness-weighted, chord track 1.5x) + bass chroma for the root, maj/m/5/sus2/sus4 templates, Viterbi smoothing, min 2 beats per chord. Strums from the chord track's onsets; a chord with no strum is held. Voicings: open shapes table, else E/A-shape barres (standard tuning). `build_gp.chord_diagram` attaches names/diagrams.
+- `bass_fix.py` — note-list bass cleanup at export (`--clean-bass`): picks one note per 16th (chord root > chord tone > loudest), `clean_bass.Spectra` octave check, leaps > 9 semitones from the neighbours' median moved by octaves, range E1–F#3, removes short off-kick non-chord/quiet notes, merges fragments. Kicks come from the exported drum track.

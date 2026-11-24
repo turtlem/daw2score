@@ -88,6 +88,14 @@ def main():
     proj = rpp.parse(a.project)
     info = rpp.project_info(proj)
     bpm = info["tempo"]
+    # the score's own tempo wins (export_gp.py --tempo may differ from the project's)
+    for auto in r.iter("Automation"):
+        if auto.findtext("Type") == "Tempo" and auto.findtext("Bar") in ("0", None):
+            score_bpm = float(auto.findtext("Value").split()[0])
+            if abs(score_bpm - bpm) > 1e-6:
+                print(f"using the score tempo {score_bpm:g} BPM (project: {bpm:g})")
+            bpm = score_bpm
+            break
     by_name = {t["name"]: t for t in rpp.tracks(proj)}
     missing = [n for n in a.tracks if n not in by_name]
     if missing:
