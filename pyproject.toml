@@ -1,7 +1,7 @@
 [project]
 name = "daw2score"
 version = "0.1.0"
-description = "Turn REAPER projects into Guitar Pro files (MIDI + audio transcription, bass cleanup, embedded audio track)"
+description = "Turn DAW projects (REAPER, DAWproject, stems + MIDI) into Guitar Pro or MusicXML scores"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "basic-pitch[onnx]",
@@ -13,6 +13,9 @@ dependencies = [
     "setuptools<81",    # resampy still imports pkg_resources
     "lxml>=6.1.3",
 ]
+
+[project.optional-dependencies]
+gui = ["PySide6-Essentials>=6.7"]   # gp_export/gui.py: uv sync --extra gui
 
 [tool.uv]
 package = false

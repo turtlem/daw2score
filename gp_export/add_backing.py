@@ -79,13 +79,17 @@ def main():
     ap.add_argument("--name", help="audio track name shown in Guitar Pro")
     ap.add_argument("--out"); ap.add_argument("--replace", action="store_true")
     a = ap.parse_args()
+    add(a.score, a.project, a.tracks, name=a.name, out=a.out, replace=a.replace)
 
-    sc = gpif.Score(a.score)
+
+def add(score, proj_path, track_refs, name=None, out=None, replace=False):
+    """Embed the mix of track_refs (track names or 0-based indices) as the audio track of score."""
+    sc = gpif.Score(score)
     r = sc.root
-    if r.find("BackingTrack") is not None and not a.replace:
+    if r.find("BackingTrack") is not None and not replace:
         sys.exit("this score already has an audio track (use --replace)")
 
-    P = project.load(a.project)
+    P = project.load(proj_path)
     info = P.info
     bpm = info["tempo"]
     # the score's own tempo wins (export_gp.py --tempo may differ from the project's)
@@ -97,13 +101,14 @@ def main():
             bpm = score_bpm
             break
     by_name = {t["name"]: t for t in P.tracks}
-    missing = [n for n in a.tracks if n not in by_name]
+    missing = [n for n in track_refs if not isinstance(n, int) and n not in by_name]
     if missing:
         sys.exit(f"tracks not found in project: {missing}")
+    tracks = [P.tracks[n] if isinstance(n, int) else by_name[n] for n in track_refs]
     sps = 60.0 / bpm / 4  # seconds per 16th slot
-    end_s = max([sc.bar_slots[-1][1] * sps] + [i["position"] + i["length"] for n in a.tracks
-                                                for i in by_name[n]["items"] if not i["mute"]])
-    audio, peak = render_stereo(P.dir, [by_name[n] for n in a.tracks], end_s)
+    end_s = max([sc.bar_slots[-1][1] * sps] + [i["position"] + i["length"] for t in tracks
+                                                for i in t["items"] if not i["mute"]])
+    audio, peak = render_stereo(P.dir, tracks, end_s)
 
     with tempfile.TemporaryDirectory() as td:
         mp3 = os.path.join(td, "mix.mp3")
@@ -119,7 +124,7 @@ def main():
         if auto.findtext("Type") == "SyncPoint":
             auto.getparent().remove(auto)
 
-    name = a.name or " + ".join(a.tracks)
+    name = name or " + ".join(t["name"] for t in tracks)
     bt = etree.Element("BackingTrack")
     el(bt, "IconId", "21"); el(bt, "Color", "0 0 0")
     el(bt, "Name", name, cdata=True); el(bt, "ShortName", name[:12], cdata=True)
@@ -143,13 +148,13 @@ def main():
     sync_point(autos, last, int(round(sc.bar_slots[last][0] * sps * SR)), bpm, False)
 
     # --- write zip (asset stored uncompressed, other entries untouched)
-    out = a.out or a.score
-    if not a.out:
-        base, ext = os.path.splitext(a.score)
+    if not out:
+        out = score
+        base, ext = os.path.splitext(score)
         backup = base + ".before-backing" + ext
         if os.path.exists(backup):
             sys.exit(f"backup {backup} already exists; move it away or pass --out")
-        shutil.copy2(a.score, backup)
+        shutil.copy2(score, backup)
         print("backup:", backup)
     data = etree.tostring(r, xml_declaration=True, encoding="utf-8")
     buf = io.BytesIO()

@@ -14,19 +14,37 @@ warnings.filterwarnings("ignore")
 SR = 22050
 
 
-def profile(name):
+PROFILES = {
+    "bass": dict(fmin=30, fmax=400, onset=0.5, frame=0.3, min_len=90, max_poly=1),
+    "gtr_solo": dict(fmin=75, fmax=1700, onset=0.5, frame=0.3, min_len=70, max_poly=1),
+    "gtr_clean": dict(fmin=75, fmax=1400, onset=0.5, frame=0.3, min_len=90, max_poly=6),
+    "gtr_heavy": dict(fmin=70, fmax=1000, onset=0.6, frame=0.35, min_len=90, max_poly=3),
+    "vocal": dict(fmin=70, fmax=1100, onset=0.5, frame=0.3, min_len=110, max_poly=1),
+    "other": dict(fmin=30, fmax=2000, onset=0.5, frame=0.3, min_len=90, max_poly=6),
+}
+
+
+def guess_kind(name):
+    """Instrument kind from a track name: bass, gtr_solo, gtr_clean, gtr_heavy, vocal or other."""
     n = name.lower()
     if "bass" in n:
-        return dict(kind="bass", fmin=30, fmax=400, onset=0.5, frame=0.3, min_len=90, max_poly=1)
+        return "bass"
     if "solo" in n:
-        return dict(kind="gtr_solo", fmin=75, fmax=1700, onset=0.5, frame=0.3, min_len=70, max_poly=1)
+        return "gtr_solo"
     if "clean" in n:
-        return dict(kind="gtr_clean", fmin=75, fmax=1400, onset=0.5, frame=0.3, min_len=90, max_poly=6)
+        return "gtr_clean"
     if "gtr" in n or "guit" in n or re.search(r"\bgt\b", n):
-        return dict(kind="gtr_heavy", fmin=70, fmax=1000, onset=0.6, frame=0.35, min_len=90, max_poly=3)
+        return "gtr_heavy"
     if "chant" in n or "vocal" in n or "voix" in n or re.search(r"\bvx\b", n):
-        return dict(kind="vocal", fmin=70, fmax=1100, onset=0.5, frame=0.3, min_len=110, max_poly=1)
-    return dict(kind="other", fmin=30, fmax=2000, onset=0.5, frame=0.3, min_len=90, max_poly=6)
+        return "vocal"
+    return "other"
+
+
+def profile(name, kind=None):
+    """basic-pitch settings for a track, from its name or from an explicit kind (a role chosen by the
+    user; "keys" uses the generic polyphonic settings)."""
+    kind = kind or guess_kind(name)
+    return dict(kind=kind, **PROFILES.get(kind, PROFILES["other"]))
 
 
 def resample(x, sr_in, sr_out):
@@ -71,7 +89,10 @@ def main():
     run(sys.argv[1], sys.argv[2], [int(a) for a in sys.argv[3:]])
 
 
-def run(proj_path, out_dir, wanted):
+def run(proj_path, out_dir, wanted, roles=None, log=print):
+    """roles: {track index: kind} overriding the kind guessed from the name; a cached transcription
+    made with another kind is redone."""
+    roles = roles or {}
     os.makedirs(out_dir, exist_ok=True)
     trs = project.load(proj_path).tracks
     from basic_pitch.inference import predict, Model
@@ -81,15 +102,21 @@ def run(proj_path, out_dir, wanted):
         if t["index"] not in wanted:
             continue
         jpath = os.path.join(out_dir, f'{t["index"]}.json')
+        p = profile(t["name"], roles.get(t["index"]))
         if os.path.exists(jpath):
-            print(f'[{t["index"]}] {t["name"]}: cached', flush=True)
-            continue
+            try:
+                cached = json.load(open(jpath, encoding="utf-8"))["profile"]["kind"]
+            except (ValueError, KeyError):
+                cached = None
+            if cached == p["kind"]:
+                log(f'[{t["index"]}] {t["name"]}: cached')
+                continue
+        log(f'[{t["index"]}] {t["name"]}: transcribing as {p["kind"]}...')
         its = t["items"]
         buf, t0 = render(None, its)
         if buf is None:
-            print(f'[{t["index"]}] {t["name"]}: no audio', flush=True)
+            log(f'[{t["index"]}] {t["name"]}: no audio')
             continue
-        p = profile(t["name"])
         safe = re.sub(r"[^\w-]+", "_", t["name"])
         wav = os.path.join(out_dir, f'{t["index"]}_{safe}.wav')
         sf.write(wav, buf, SR, subtype="PCM_16")
@@ -101,8 +128,8 @@ def run(proj_path, out_dir, wanted):
         notes.sort(key=lambda n: (n["start"], n["pitch"]))
         json.dump({"index": t["index"], "name": t["name"], "profile": p, "notes": notes},
                   open(jpath, "w", encoding="utf-8"))
-        print(f'[{t["index"]}] {t["name"]}: {len(notes)} notes ({p["kind"]}), '
-              f'{sum(1 for i in its if i.get("n_takes", 1) > 1)} multi-take items', flush=True)
+        log(f'[{t["index"]}] {t["name"]}: {len(notes)} notes ({p["kind"]}), '
+              f'{sum(1 for i in its if i.get("n_takes", 1) > 1)} multi-take items',)
 
 
 if __name__ == "__main__":

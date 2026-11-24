@@ -1,5 +1,7 @@
 # daw2score
 
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/vincentmouge)
+
 Turn a [REAPER](https://www.reaper.fm/) project, a [DAWproject](https://github.com/bitwig/dawproject) file (Bitwig Studio, Studio One, Cubase 14+) — or stems and MIDI files exported from any DAW — into a Guitar Pro score (or MusicXML for Finale, MuseScore, Dorico, Sibelius): MIDI tracks become notation, audio tracks are transcribed (pitched instruments with basic-pitch, multitrack drums from the close mics, rhythm guitars as named chords), and the result can be paired with an embedded, synced audio track in Guitar Pro 8.
 
 Built and tested on Windows with REAPER 7, Guitar Pro 8.1 and Toontrack EZdrummer 3 / EZkeys 2.
@@ -9,6 +11,8 @@ Built and tested on Windows with REAPER 7, Guitar Pro 8.1 and Toontrack EZdrumme
 | Script | Purpose |
 |---|---|
 | `gp_export/export_gp.py` | Selected REAPER tracks → Guitar Pro 7/8 `.gp`, `.gp5` or MusicXML (`.musicxml`, `.mxl`). Folder tracks are expanded. MIDI is read from the `.rpp`; audio is transcribed with Spotify's [basic-pitch](https://github.com/spotify/basic-pitch). Keeps time-signature changes and markers (as sections). Options for recordings: tempo override, sections by bar, merged tracks, audio drums, chord tracks, bass cleanup (see below). |
+| `gp_export/gui.py` | Export window (Qt): tracks, roles, merged tracks, tempo, sections, formats, audio track; settings remembered per project. |
+| `gp_export/sections.py` | Proposes song sections from the tracks (novelty of per-bar levels and harmony), labelled A, B, C… by similarity. |
 | `gp_export/musicxml.py` | MusicXML 4.0 writer used for `.musicxml`/`.mxl` outputs: bass and guitars on a standard staff + TAB staff, keys and vocals on real notation staves, drums on a percussion staff, chord names with diagrams, sections as rehearsal marks. |
 | `gp_export/drums_audio.py` | Multitrack drum recording (kick / snare / toms / hi-hat / overheads mics) → GM drum hits. Used automatically by `export_gp.py` for a drum folder without MIDI. |
 | `gp_export/harmony.py` | Chord detection from the guitars + bass audio, written as strummed chords with chord names and diagrams, following the guitar's own attacks (`--chords`). |
@@ -27,9 +31,24 @@ Requires [uv](https://docs.astral.sh/uv/) (`winget install astral-sh.uv`), which
 ```powershell
 git clone <this repo> && cd daw2score
 uv sync
+uv sync --extra gui      # optional: the export window (PySide6)
 ```
 
-## Usage
+## Export window
+
+```powershell
+uv run python gp_export/gui.py ["D:\Music\Song\Song.rpp"]
+```
+
+Drop a REAPER project, a `.dawproject` or a stems folder on the window, then:
+
+- **Pistes (tracks):** tick the tracks to export and pick their role (drums, bass, distorted / clean / lead guitar, guitar as chords, vocals, keys; *Auto* guesses it from the name). Tracks given the same score name are merged into one score track (e.g. a lead vocal split over several tracks). A folder of drum mics exports as one drum track. *Audio .gp* = mixed into the Guitar Pro 8 audio track; *Accords* = listened to when detecting the chords.
+- **Tempo et sections:** project tempo, a typed one, or detection from the drums; sections from the project markers, typed by bar, or proposed automatically from the tracks (changes in levels and harmony; repeated parts get the same letter) and then renamed.
+- **Sortie (output):** folder, file name, formats (`.gp`, MusicXML, `.gp5`), bass cleanup, MIDI drum map, audio track name.
+
+The settings are remembered per project (`gp_export_cache/gui_<project>.json` next to the project). The window runs the same export as `export_gp.py` (`exporter.py`). It is in English or French (system language by default, switch in the top-right corner).
+
+## Command line
 
 Save the REAPER project first: the scripts read the `.rpp` from disk. Tracks are given by their REAPER name (case-insensitive); a folder track exports all its children. When two tracks share a name, pass the 0-based track index instead (`inspect_rpp.py` lists them).
 

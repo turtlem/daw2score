@@ -277,11 +277,12 @@ def main():
 
 
 def run(proj_path, tdir, out_path, sel, drum_map=None, tempo=None, sections=None, groups=None,
-        chord_tracks=None, chord_labels=None, clean_bass=False):
+        chord_tracks=None, chord_labels=None, clean_bass=False, roles=None):
     """out_path: a .gp5 or MusicXML (.musicxml/.xml/.mxl) path, or a list of them.
     sel: track indices (folders expanded). groups: [(name, [indices])] each written as ONE track from
-    the cached transcriptions of its tracks (a drum folder transcribed by drums_audio.py is a group of
-    one: its folder index). tempo: BPM overriding the project's (for audio recorded to a click while
+    its tracks' MIDI or cached transcriptions (a drum folder transcribed by drums_audio.py is a group
+    of one: its folder index). roles: {track index: kind} ("drums", "bass", "gtr_heavy", "gtr_clean",
+    "gtr_solo", "vocal", "keys") overriding the kind guessed from the track name. tempo: BPM overriding the project's (for audio recorded to a click while
     the project kept REAPER's default tempo). sections: {bar number (1-based): name}, replacing the
     project markers. chord_tracks: [(name, events from harmony.chord_events)] written as strummed
     chords with chord names. clean_bass: run bass_fix.fix on bass tracks (chord_labels = per-beat chord
@@ -299,43 +300,56 @@ def run(proj_path, tdir, out_path, sel, drum_map=None, tempo=None, sections=None
 
     specs = []  # (name, kind, notes, is_drum)
     spec_idxs = {}
+    roles = roles or {}
+
+    def track_notes(t):
+        """-> (notes, kind) of one track: MIDI from the project, audio from the transcription cache."""
+        its = t["items"]
+        if any(i.get("src_type") == "MIDI" and not i["mute"] for i in its):
+            notes = midi_notes(its, bpm)
+            kind = roles.get(t["index"])
+            if kind is None:
+                if t.get("drums") or "drum" in t["name"].lower() or "EZdrummer" in t["fx"]:
+                    kind = "drums"
+                else:  # a MIDI bass / guitar / vocal line (named like one) is fretted, other MIDI = keys
+                    kind = transcribe.guess_kind(t["name"])
+                    kind = "keys" if kind == "other" else kind
+            return notes, kind
+        notes, prof = audio_notes(tdir, t["index"], bpm)
+        if not notes:
+            return [], None
+        # "drums_audio" = already GM (from drums_audio.py), so no plugin note map
+        return notes, "drums_audio" if prof["kind"] == "drums" else prof["kind"]
+
+    def add_spec(name, kind, notes):
+        if kind == "keys":
+            rh = [n for n in notes if n["pitch"] >= 60]
+            lh = [n for n in notes if n["pitch"] < 60]
+            if rh: specs.append((name + " (MD)", "keys_rh", rh, False))
+            if lh: specs.append((name + " (MG)", "keys_lh", lh, False))
+        else:
+            specs.append((name, kind, notes, kind in ("drums", "drums_audio")))
+
     for name, idxs in groups or []:
         spec_idxs[name] = idxs
         notes, kind = [], None
         for i in idxs:
-            ns, prof = audio_notes(tdir, i, bpm)
+            ns, k = track_notes(all_trs[i])
             if ns:
                 notes += ns
-                kind = kind or prof["kind"]
+                kind = kind or k
         if not notes:
             print(f"skip group {name!r}: no notes")
             continue
         notes.sort(key=lambda n: (n["start"], n["pitch"]))
-        # "drums_audio" = already GM (from drums_audio.py), so no plugin note map
-        specs.append((name, "drums_audio" if kind == "drums" else kind, notes, kind == "drums"))
+        add_spec(name, kind, notes)
     for t in trs:
-        its = t["items"]
         spec_idxs[t["name"]] = [t["index"]]
-        has_midi = any(i.get("src_type") == "MIDI" and not i["mute"] for i in its)
-        fx = t["fx"]
-        if has_midi:
-            notes = midi_notes(its, bpm)
-            if t.get("drums") or "drum" in t["name"].lower() or "EZdrummer" in fx:
-                specs.append((t["name"], "drums", notes, True))
-            elif transcribe.profile(t["name"])["kind"] != "other":
-                # a MIDI bass / guitar / vocal line (named like one): fret it like a transcription
-                specs.append((t["name"], transcribe.profile(t["name"])["kind"], notes, False))
-            else:
-                rh = [n for n in notes if n["pitch"] >= 60]
-                lh = [n for n in notes if n["pitch"] < 60]
-                if rh: specs.append((t["name"] + " (MD)", "keys_rh", rh, False))
-                if lh: specs.append((t["name"] + " (MG)", "keys_lh", lh, False))
+        notes, kind = track_notes(t)
+        if notes:
+            add_spec(t["name"], kind, notes)
         else:
-            notes, prof = audio_notes(tdir, t["index"], bpm)
-            if notes:
-                specs.append((t["name"], prof["kind"], notes, False))
-            else:
-                print(f'skip [{t["index"]}] {t["name"]}: no notes')
+            print(f'skip [{t["index"]}] {t["name"]}: no notes')
 
     if clean_bass:
         import bass_fix
