@@ -1,5 +1,5 @@
 {
-  "name": "reaper-to-gp-gp7",
+  "name": "daw2score-gp7",
   "private": true,
   "description": "GP5 -> Guitar Pro 7/8 (.gp) conversion with alphaTab",
   "type": "module",

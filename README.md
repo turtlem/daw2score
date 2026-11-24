@@ -1,4 +1,4 @@
-# reaper_to_gp
+# daw2score
 
 Turn a [REAPER](https://www.reaper.fm/) project, a [DAWproject](https://github.com/bitwig/dawproject) file (Bitwig Studio, Studio One, Cubase 14+) — or stems and MIDI files exported from any DAW — into a Guitar Pro score (or MusicXML for Finale, MuseScore, Dorico, Sibelius): MIDI tracks become notation, audio tracks are transcribed (pitched instruments with basic-pitch, multitrack drums from the close mics, rhythm guitars as named chords), and the result can be paired with an embedded, synced audio track in Guitar Pro 8.
 
@@ -25,7 +25,7 @@ Built and tested on Windows with REAPER 7, Guitar Pro 8.1 and Toontrack EZdrumme
 Requires [uv](https://docs.astral.sh/uv/) (`winget install astral-sh.uv`), which provides Python 3.11 itself, and [Node.js](https://nodejs.org/) to write `.gp` files (the GP5 → GP7/8 conversion uses [alphaTab](https://github.com/CoderLine/alphaTab); `npm ci` runs in `gp_export/gp7` on first use).
 
 ```powershell
-git clone <this repo> && cd reaper_to_gp
+git clone <this repo> && cd daw2score
 uv sync
 ```
 

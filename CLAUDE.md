@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-reaper_to_gp: tools that turn REAPER (DAW) projects, DAWproject files (Bitwig/Studio One/Cubase 14+), or stems + MIDI folders from any DAW, into Guitar Pro files (or MusicXML), on Windows. See README.md for the user-facing overview.
+daw2score: tools that turn REAPER (DAW) projects, DAWproject files (Bitwig/Studio One/Cubase 14+), or stems + MIDI folders from any DAW, into Guitar Pro files (or MusicXML), on Windows. See README.md for the user-facing overview.
 
 ## REAPER MCP
 

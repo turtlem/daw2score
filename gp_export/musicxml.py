@@ -138,7 +138,7 @@ def write(song, path, kinds, bpm):
     sub(sub(root, "work"), "work-title", song.title)
     ident = sub(root, "identification")
     enc = sub(ident, "encoding")
-    sub(enc, "software", "reaper_to_gp")
+    sub(enc, "software", "daw2score")
     plist = sub(root, "part-list")
 
     parts = []
