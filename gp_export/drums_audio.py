@@ -17,7 +17,7 @@ import librosa
 from scipy.signal import butter, sosfiltfilt
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import rpp, transcribe
+import project, transcribe
 
 SR = transcribe.SR
 HOP = 64                      # 2.9 ms analysis frames
@@ -90,7 +90,7 @@ def smooth(env, s=0.02):
 
 
 def track_audio(pdir, t, length):
-    buf, t0 = transcribe.render(pdir, rpp.items(t["node"]))
+    buf, t0 = transcribe.render(pdir, t["items"])
     out = np.zeros(length, np.float32)
     if buf is None:
         return out
@@ -118,9 +118,8 @@ def hits(sig, ref_sigs=(), thr=0.2, ratio_k=3.0, delta=0.07):
 
 
 def transcribe_folder(proj_path, folder_idx):
-    proj = rpp.parse(proj_path)
-    trs = rpp.tracks(proj)
-    pdir = os.path.dirname(os.path.abspath(proj_path))
+    trs = project.load(proj_path).tracks
+    pdir = None
     folder = trs[folder_idx]
     kids = []
     for c in trs[folder_idx + 1:]:
@@ -128,7 +127,7 @@ def transcribe_folder(proj_path, folder_idx):
             break
         if not c["is_folder"]:
             kids.append(c)
-    ends = [i["position"] + i["length"] for c in kids for i in rpp.items(c["node"])]
+    ends = [i["position"] + i["length"] for c in kids for i in c["items"]]
     length = int((max(ends) + 1) * SR)
     mics = {}
     for c in kids:

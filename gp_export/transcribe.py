@@ -8,7 +8,7 @@ import numpy as np
 import soundfile as sf
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import rpp
+import project
 
 warnings.filterwarnings("ignore")
 SR = 22050
@@ -73,8 +73,7 @@ def main():
 
 def run(proj_path, out_dir, wanted):
     os.makedirs(out_dir, exist_ok=True)
-    proj = rpp.parse(proj_path)
-    trs = rpp.tracks(proj)
+    trs = project.load(proj_path).tracks
     from basic_pitch.inference import predict, Model
     from basic_pitch import ICASSP_2022_MODEL_PATH
     model = Model(ICASSP_2022_MODEL_PATH)
@@ -85,8 +84,8 @@ def run(proj_path, out_dir, wanted):
         if os.path.exists(jpath):
             print(f'[{t["index"]}] {t["name"]}: cached', flush=True)
             continue
-        its = rpp.items(t["node"])
-        buf, t0 = render(os.path.dirname(proj_path), its)
+        its = t["items"]
+        buf, t0 = render(None, its)
         if buf is None:
             print(f'[{t["index"]}] {t["name"]}: no audio', flush=True)
             continue

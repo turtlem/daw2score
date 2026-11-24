@@ -11,7 +11,7 @@ import numpy as np
 import librosa
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import rpp, transcribe
+import project, transcribe
 
 SR = transcribe.SR
 HOP = 512
@@ -49,10 +49,10 @@ def voicing(name):
 
 
 def _audio(proj_path, trs, idxs, length):
-    pdir = os.path.dirname(os.path.abspath(proj_path))
+    pdir = None
     out = np.zeros(length, np.float32)
     for i in idxs:
-        buf, t0 = transcribe.render(pdir, rpp.items(trs[i]["node"]))
+        buf, t0 = transcribe.render(pdir, trs[i]["items"])
         if buf is None:
             continue
         o = int(round(t0 * SR))
@@ -64,9 +64,8 @@ def _audio(proj_path, trs, idxs, length):
 def detect(proj_path, harmony_idxs, bass_idxs, bpm, chord_idxs=()):
     """Returns (labels per beat ('N' = no chord), seconds per beat). Each harmony track is normalized
     and weighted by its loudness per beat; the chord track itself counts 1.5x."""
-    proj = rpp.parse(proj_path)
-    trs = rpp.tracks(proj)
-    ends = [i["position"] + i["length"] for k in list(harmony_idxs) + list(bass_idxs) for i in rpp.items(trs[k]["node"])]
+    trs = project.load(proj_path).tracks
+    ends = [i["position"] + i["length"] for k in list(harmony_idxs) + list(bass_idxs) for i in trs[k]["items"]]
     length = int((max(ends) + 1) * SR)
     spb = 60.0 / bpm
     nb = int(max(ends) / spb)
@@ -106,9 +105,8 @@ def detect(proj_path, harmony_idxs, bass_idxs, bpm, chord_idxs=()):
 def strums(proj_path, idxs, bpm, slots_per_qn, thr=0.15):
     """Onset slots (16th grid) and strengths (0-1) of the chord track's audio."""
     import drums_audio as D
-    proj = rpp.parse(proj_path)
-    trs = rpp.tracks(proj)
-    ends = [i["position"] + i["length"] for k in idxs for i in rpp.items(trs[k]["node"])]
+    trs = project.load(proj_path).tracks
+    ends = [i["position"] + i["length"] for k in idxs for i in trs[k]["items"]]
     x = _audio(proj_path, trs, idxs, int((max(ends) + 1) * SR))
     env = D.envelope(x)
     fr = D.onsets(x, delta=0.04)

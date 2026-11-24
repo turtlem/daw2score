@@ -6,7 +6,7 @@ import collections, json, os, sys
 import guitarpro as gp
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import rpp, transcribe
+import project, transcribe
 
 SLOTS_PER_QN = 4  # 16th-note grid
 MAX_DRUM_SLOTS = 8
@@ -285,14 +285,14 @@ def run(proj_path, tdir, out_path, sel, drum_map=None, tempo=None, sections=None
     chords with chord names. clean_bass: run bass_fix.fix on bass tracks (chord_labels = per-beat chord
     names from harmony.detect, used to judge passing notes)."""
     drum_to_gm = load_drum_map(drum_map)
-    proj = rpp.parse(proj_path)
-    info = rpp.project_info(proj)
+    P = project.load(proj_path)
+    info = dict(P.info)
     if tempo:
         if info["tempo_points"]:
             print("WARNING: --tempo ignores the project's tempo map")
         info["tempo"], info["tempo_points"] = float(tempo), []
     bpm = info["tempo"]
-    all_trs = rpp.tracks(proj)
+    all_trs = P.tracks
     trs = expand_selection(all_trs, sel)
 
     specs = []  # (name, kind, notes, is_drum)
@@ -312,13 +312,17 @@ def run(proj_path, tdir, out_path, sel, drum_map=None, tempo=None, sections=None
         # "drums_audio" = already GM (from drums_audio.py), so no plugin note map
         specs.append((name, "drums_audio" if kind == "drums" else kind, notes, kind == "drums"))
     for t in trs:
-        its = rpp.items(t["node"])
+        its = t["items"]
+        spec_idxs[t["name"]] = [t["index"]]
         has_midi = any(i.get("src_type") == "MIDI" and not i["mute"] for i in its)
-        fx = " ".join(" ".join(c.args) for c in t["node"].find("FXCHAIN")[0].children) if t["node"].find("FXCHAIN") else ""
+        fx = t["fx"]
         if has_midi:
             notes = midi_notes(its, bpm)
-            if "drum" in t["name"].lower() or "EZdrummer" in fx:
+            if t.get("drums") or "drum" in t["name"].lower() or "EZdrummer" in fx:
                 specs.append((t["name"], "drums", notes, True))
+            elif transcribe.profile(t["name"])["kind"] != "other":
+                # a MIDI bass / guitar / vocal line (named like one): fret it like a transcription
+                specs.append((t["name"], transcribe.profile(t["name"])["kind"], notes, False))
             else:
                 rh = [n for n in notes if n["pitch"] >= 60]
                 lh = [n for n in notes if n["pitch"] < 60]
@@ -330,16 +334,15 @@ def run(proj_path, tdir, out_path, sel, drum_map=None, tempo=None, sections=None
                 specs.append((t["name"], prof["kind"], notes, False))
             else:
                 print(f'skip [{t["index"]}] {t["name"]}: no notes')
-            spec_idxs[t["name"]] = [t["index"]]
 
     if clean_bass:
         import bass_fix
         kicks = {round(n["start"] * SLOTS_PER_QN) for _, _, ns, d in specs if d for n in ns if n["pitch"] in (35, 36)}
-        pdir = os.path.dirname(os.path.abspath(proj_path))
+        pdir = P.dir
         for k, (name, kind, notes, is_drum) in enumerate(specs):
-            if kind != "bass":
-                continue
-            its = [i for ix in spec_idxs.get(name, []) for i in rpp.items(all_trs[ix]["node"])]
+            its = [i for ix in spec_idxs.get(name, []) for i in all_trs[ix]["items"]]
+            if kind != "bass" or any(i.get("src_type") == "MIDI" for i in its):
+                continue  # MIDI is exact: only transcribed basses are cleaned
             buf, t0 = transcribe.render(pdir, its) if its else (None, 0.0)
             fixed, st = bass_fix.fix(notes, buf, t0, bpm, SLOTS_PER_QN, kicks, chord_labels)
             print(f"bass cleanup {name!r}: {len(notes)} -> {len(fixed)} notes {st}")
@@ -350,7 +353,7 @@ def run(proj_path, tdir, out_path, sel, drum_map=None, tempo=None, sections=None
     end_qn = max((n["end"] if "end" in n else n["e"] / SLOTS_PER_QN) for _, _, ns, _ in specs for n in ns) + 0.01
     measures = build_measures(info, end_qn)
 
-    song = gp.Song(title=os.path.splitext(os.path.basename(proj_path))[0], tempo=int(round(bpm)))
+    song = gp.Song(title=P.name, tempo=int(round(bpm)))
     song.measureHeaders = []
     song.tracks = []
     marker_qn = {round(t * bpm / 60.0 * SLOTS_PER_QN): name for t, name in info["markers"]}

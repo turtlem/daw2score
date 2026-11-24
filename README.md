@@ -1,6 +1,6 @@
 # reaper_to_gp
 
-Turn a [REAPER](https://www.reaper.fm/) project into a Guitar Pro score: MIDI tracks become notation, audio tracks are transcribed (pitched instruments with basic-pitch, multitrack drums from the close mics, rhythm guitars as named chords), and the result can be paired with an embedded, synced audio track in Guitar Pro 8.
+Turn a [REAPER](https://www.reaper.fm/) project, a [DAWproject](https://github.com/bitwig/dawproject) file (Bitwig Studio, Studio One, Cubase 14+) — or stems and MIDI files exported from any DAW — into a Guitar Pro score: MIDI tracks become notation, audio tracks are transcribed (pitched instruments with basic-pitch, multitrack drums from the close mics, rhythm guitars as named chords), and the result can be paired with an embedded, synced audio track in Guitar Pro 8.
 
 Built and tested on Windows with REAPER 7, Guitar Pro 8.1 and Toontrack EZdrummer 3 / EZkeys 2.
 
@@ -14,7 +14,10 @@ Built and tested on Windows with REAPER 7, Guitar Pro 8.1 and Toontrack EZdrumme
 | `gp_export/bass_fix.py` | Cleans a transcribed bass while exporting (`--clean-bass`): octave errors, incoherent leaps, passing-note parasites, fragments. |
 | `gp_export/clean_bass.py` | Same idea on an existing Guitar Pro 7/8 `.gp`, for MIDI-drum projects: fixes octave errors by checking the bass audio, merges fragmented notes, removes quiet off-kick parasites, re-frets. |
 | `gp_export/add_backing.py` | Mixes REAPER tracks (e.g. stems) into one MP3 and embeds it as the Guitar Pro 8 audio track, synced to bar 1. |
-| `gp_export/inspect_rpp.py` | Prints a project's tempo/time-signature map, markers, folder tree and items. |
+| `gp_export/tempo.py` | Detects the tempo of a recording played to a click (`--tempo auto`) and warns if the beat grid does not start at 0 s. |
+| `gp_export/project.py` | Reads the input: a REAPER `.rpp`, a `.dawproject` or a stems + MIDI folder, into one DAW-independent model. |
+| `gp_export/dawproject.py` | DAWproject reader: tracks and group tracks, audio clips (embedded or external, time-stretched), note clips (loops), markers, time signatures. |
+| `gp_export/inspect_rpp.py` | Prints a project's (or stems folder's) tempo/time-signature map, markers, folder tree and items. |
 
 ## Install
 
@@ -40,6 +43,41 @@ uv run python gp_export/clean_bass.py "D:\Music\Song\Song.gp" "D:\Music\Song\Son
 uv run python gp_export/add_backing.py "D:\Music\Song\Song.gp" "D:\Music\Song\Song.rpp" "Guitars - stem"
 ```
 
+### Bitwig Studio, Studio One, Cubase 14+: DAWproject
+
+Export the song as `.dawproject` from the DAW (export or save-as menu, depending on the DAW) and pass that file instead of a `.rpp`. Tracks, group tracks (as folders), audio and MIDI clips, tempo, time signatures and markers are read directly; no stems needed. Embedded audio is extracted once to `gp_export_cache/dawproject_media/`.
+
+```powershell
+uv run python gp_export/export_gp.py "D:\Music\Song.dawproject" "D:\Music\Song.gp" Drums Bass
+```
+
+Instrument tracks are read as their MIDI notes (like REAPER). Tempo automation is not supported (constant tempo only).
+
+### Other DAWs: stems + MIDI folder
+
+For DAWs without DAWproject (Ableton Live, Logic, Pro Tools, FL Studio, older Cubase…), any DAW (Ableton Live, Logic, Cubase, Pro Tools, FL Studio, Bitwig, Studio One…) can export stems and MIDI. Export every track **from the song start** (bar 1, so that all files start together) and pass the folder instead of a `.rpp`:
+
+```
+Song/
+  Bass.wav                 one track per audio file (wav, flac, aif, ogg, mp3), named after the file
+  Guitar front.wav
+  Guitar back.wav
+  Drums/                   a sub-folder is a folder track (here: drum mics, transcribed hit by hit)
+    Kick.wav
+    Snare top.wav
+    HH.wav
+    OH L.wav
+  song.mid                 optional: each MIDI track becomes a track (channel 10 = drums);
+                           tempo, time-signature changes and markers are read from it
+```
+
+```powershell
+uv run python gp_export/export_gp.py "D:\Music\Song" "D:\Music\Song.gp" Drums Bass `
+    --chords "Rhythm=Guitar front+Guitar back" --clean-bass --tempo auto
+```
+
+Without a MIDI file, the tempo is unknown: use `--tempo BPM` or `--tempo auto` (constant tempo, played to a click). `add_backing.py` and `clean_bass.py` accept the folder too. MIDI tracks named like a bass, guitar or vocal line are fretted as such; other MIDI tracks are written as keys.
+
 ### Multitrack recordings
 
 For a band recorded to a click and imported into REAPER (project left at the default 120 BPM, drums as separate mics, a part split over several tracks):
@@ -48,10 +86,10 @@ For a band recorded to a click and imported into REAPER (project left at the def
 uv run python gp_export/export_gp.py Song.rpp Song.gp Drums "Bass=Bass DI" `
     "Vocals=Lead verse+Lead chorus" `
     --chords "Rhythm=Gtr front+Gtr back" --harmony "Gtr front+Gtr back+Lead gtr" `
-    --clean-bass --tempo 134 --section 3=Intro --section "20=Verse 1" --section "58=Chorus"
+    --clean-bass --tempo auto --section 3=Intro --section "20=Verse 1" --section "58=Chorus"
 ```
 
-- `--tempo` overrides the project tempo; `--section BAR=NAME` places section markers by bar.
+- `--tempo` overrides the project tempo (`--tempo auto` detects it); `--section BAR=NAME` places section markers by bar.
 - `NAME=trackA+trackB` writes several audio tracks as one Guitar Pro track.
 - A folder named like `drums`/`batterie` with audio mics only is transcribed by `drums_audio.py` (mic roles come from the track names: kick, snare, tom hi/mid/lo, hh, oh, cowbell; rooms and shakers are ignored).
 - `--chords` writes the guitar as chords detected from the `--harmony` tracks plus the bass.

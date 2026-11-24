@@ -1,7 +1,7 @@
 """REAPER project -> Guitar Pro 7/8 (.gp) or Guitar Pro 5 (.gp5), in one command.
 
-usage: export_gp.py <project.rpp> <out.gp|out.gp5> <track> [<track> ...]
-                    [--cache DIR] [--force] [--drum-map JSON] [--tempo BPM] [--section BAR=NAME ...]
+usage: export_gp.py <project.rpp | stems folder> <out.gp|out.gp5> <track> [<track> ...]
+                    [--cache DIR] [--force] [--drum-map JSON] [--tempo BPM|auto] [--section BAR=NAME ...]
                     [--chords NAME=trackA+trackB] [--harmony trackA+trackB] [--clean-bass]
 
 Each <track> is a track name as shown in REAPER (case-insensitive, must be unique) or a 0-based
@@ -14,8 +14,11 @@ their children. MIDI tracks are read from the .rpp; audio tracks are transcribed
 over several tracks by section). A drum folder made of audio mics (name contains "drum"/"batterie",
 no MIDI inside) is transcribed by drums_audio.py into one percussion track.
 
+The project is a REAPER .rpp or, for any other DAW, a folder of stems + MIDI files (see
+project.py: one track per audio file, sub-folders are folder tracks, MIDI files give the tempo).
+
 --tempo overrides the project tempo (audio recorded to a click while the project kept REAPER's
-default 120 BPM; see detect_tempo.py). --section 20="Couplet 1" sets section markers by bar number
+default 120 BPM, or stems without MIDI); "auto" detects it from the drums (tempo.py). --section 20="Couplet 1" sets section markers by bar number
 instead of the project markers.
 
 --chords writes a rhythm guitar as strummed chords with chord names instead of transcribed notes:
@@ -29,7 +32,7 @@ first use). Only .gp files can then get an audio track (add_backing.py) or clean
 import argparse, os, re, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import rpp, transcribe, build_gp, drums_audio, harmony
+import project, transcribe, build_gp, drums_audio, harmony
 
 
 def resolve_tracks(trs, specs):
@@ -55,7 +58,7 @@ def is_audio_drum_folder(trs, t):
     if not t["is_folder"] or not re.search(r"drum|batterie", t["name"], re.I):
         return False
     kids = build_gp.expand_selection(trs, [t["index"]])
-    return not any(i.get("src_type") == "MIDI" for k in kids for i in rpp.items(k["node"]))
+    return not any(i.get("src_type") == "MIDI" for k in kids for i in k["items"])
 
 
 def parse_sections(items):
@@ -76,7 +79,7 @@ def main():
     ap.add_argument("--cache")
     ap.add_argument("--force", action="store_true", help="overwrite the output file")
     ap.add_argument("--drum-map", help="drum note map JSON (default gp_export/drum_maps/ezdrummer3.json)")
-    ap.add_argument("--tempo", type=float, help="BPM overriding the project tempo")
+    ap.add_argument("--tempo", help='BPM overriding the project tempo, or "auto" to detect it')
     ap.add_argument("--section", action="append", metavar="BAR=NAME", help="section marker at a bar (repeatable)")
     ap.add_argument("--chords", action="append", metavar="NAME=trackA+trackB", help="chord track (repeatable)")
     ap.add_argument("--harmony", metavar="trackA+trackB", help="tracks used to detect the chords")
@@ -85,11 +88,25 @@ def main():
 
     if os.path.exists(a.out) and not a.force:
         sys.exit(f"{a.out} already exists (use --force to overwrite)")
-    cache = a.cache or os.path.join(os.path.dirname(os.path.abspath(a.project)), "gp_export_cache")
+    P = project.load(a.project)
+    cache = a.cache or os.path.join(P.dir, "gp_export_cache")
     sections = parse_sections(a.section)
+    if a.tempo == "auto":
+        import tempo
+        d = tempo.detect(a.project)
+        tempo.report(d)
+        b = d["bpm"]
+        a.tempo = float(round(b)) if abs(b - round(b)) < 0.15 else round(b, 1)
+        print(f"using --tempo {a.tempo:g}")
+    elif a.tempo is not None:
+        try:
+            a.tempo = float(a.tempo)
+        except ValueError:
+            sys.exit(f"--tempo expects a number or 'auto', got {a.tempo!r}")
+    elif os.path.isdir(a.project) and not P.info.get("tempo_source"):
+        print("WARNING: stems folder without a MIDI file: tempo 120 assumed (use --tempo BPM or --tempo auto)")
 
-    proj = rpp.parse(a.project)
-    trs = rpp.tracks(proj)
+    trs = P.tracks
     sel, groups, drum_folders = [], [], []
     for spec in a.tracks:
         if "+" in spec or "=" in spec:
@@ -107,7 +124,7 @@ def main():
     audio = []
     group_tracks = [trs[i] for _, idxs in groups for i in idxs if i not in drum_folders]
     for t in build_gp.expand_selection(trs, sel) + group_tracks:
-        its = rpp.items(t["node"])
+        its = t["items"]
         if not any(i.get("src_type") == "MIDI" and not i["mute"] for i in its) and any(i.get("file") for i in its):
             audio.append(t["index"])
     if audio:
@@ -116,7 +133,7 @@ def main():
     for i in drum_folders:
         drums_audio.run(a.project, cache, i)
 
-    bpm = a.tempo or rpp.project_info(proj)["tempo"]
+    bpm = a.tempo or P.info["tempo"]
     chord_specs = []
     for spec in a.chords or []:
         name, _, members = spec.rpartition("=")

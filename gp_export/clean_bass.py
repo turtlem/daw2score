@@ -18,7 +18,7 @@ import argparse, json, os, shutil, sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import gpif, rpp, transcribe, build_gp
+import gpif, project, transcribe, build_gp
 
 OCT_RATIO = 0.5       # odd(low)/even energy above which the lower octave is considered real
 PARASITE_AMP = 0.45   # basic-pitch amplitude (~ lower quartile on a test song) below which a lone 16th is noise
@@ -95,15 +95,15 @@ def main():
         print("read warnings:", *warn[:10], sep="\n  ")
     n_in = len(notes)
 
-    proj = rpp.parse(a.project)
-    info = rpp.project_info(proj)
+    P = project.load(a.project)
+    info = P.info
     bpm = info["tempo"]
     sps = 60.0 / bpm / build_gp.SLOTS_PER_QN
-    trs = {t["name"]: t for t in rpp.tracks(proj)}
+    trs = {t["name"]: t for t in P.tracks}
     bass_t, drum_t = trs[a.rpp_bass], trs[a.rpp_drums]
     kick = {round(n["start"] * build_gp.SLOTS_PER_QN)
-            for n in build_gp.midi_notes(rpp.items(drum_t["node"]), bpm) if n["pitch"] in (35, 36)}
-    cache = a.cache or os.path.join(os.path.dirname(os.path.abspath(a.project)), "gp_export_cache")
+            for n in build_gp.midi_notes(drum_t["items"], bpm) if n["pitch"] in (35, 36)}
+    cache = a.cache or os.path.join(P.dir, "gp_export_cache")
     amp = {}
     jp = os.path.join(cache, f'{bass_t["index"]}.json')
     if os.path.exists(jp):
@@ -116,7 +116,7 @@ def main():
         n["amp"] = amp.get((n["s"], n["pitch"]))
 
     # 1. octave
-    buf, t0 = transcribe.render(os.path.dirname(os.path.abspath(a.project)), rpp.items(bass_t["node"]))
+    buf, t0 = transcribe.render(P.dir, bass_t["items"])
     spectra = Spectra(buf, t0, sps)
     moved = 0
     for n in notes:

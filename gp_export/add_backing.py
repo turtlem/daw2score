@@ -14,7 +14,7 @@ import soundfile as sf
 from lxml import etree
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import gpif, rpp
+import gpif, project
 
 SR = 44100  # GP sync frame offsets are always in 44.1 kHz frames
 ASSET = "Content/Assets/backing-track.mp3"
@@ -26,7 +26,7 @@ def render_stereo(proj_dir, tracks, end_s):
     out = np.zeros((int(end_s * SR) + 1, 2), dtype=np.float32)
     cache = {}
     for t in tracks:
-        for it in rpp.items(t["node"]):
+        for it in t["items"]:
             if it["mute"] or not it.get("file"):
                 continue
             path = it["file"] if os.path.isabs(it["file"]) else os.path.join(proj_dir, it["file"])
@@ -85,8 +85,8 @@ def main():
     if r.find("BackingTrack") is not None and not a.replace:
         sys.exit("this score already has an audio track (use --replace)")
 
-    proj = rpp.parse(a.project)
-    info = rpp.project_info(proj)
+    P = project.load(a.project)
+    info = P.info
     bpm = info["tempo"]
     # the score's own tempo wins (export_gp.py --tempo may differ from the project's)
     for auto in r.iter("Automation"):
@@ -96,14 +96,14 @@ def main():
                 print(f"using the score tempo {score_bpm:g} BPM (project: {bpm:g})")
             bpm = score_bpm
             break
-    by_name = {t["name"]: t for t in rpp.tracks(proj)}
+    by_name = {t["name"]: t for t in P.tracks}
     missing = [n for n in a.tracks if n not in by_name]
     if missing:
         sys.exit(f"tracks not found in project: {missing}")
     sps = 60.0 / bpm / 4  # seconds per 16th slot
     end_s = max([sc.bar_slots[-1][1] * sps] + [i["position"] + i["length"] for n in a.tracks
-                                                for i in rpp.items(by_name[n]["node"]) if not i["mute"]])
-    audio, peak = render_stereo(os.path.dirname(os.path.abspath(a.project)), [by_name[n] for n in a.tracks], end_s)
+                                                for i in by_name[n]["items"] if not i["mute"]])
+    audio, peak = render_stereo(P.dir, [by_name[n] for n in a.tracks], end_s)
 
     with tempfile.TemporaryDirectory() as td:
         mp3 = os.path.join(td, "mix.mp3")
