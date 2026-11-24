@@ -1,7 +1,7 @@
-"""REAPER project -> Guitar Pro 7/8 (.gp) or Guitar Pro 5 (.gp5), in one command.
+"""REAPER project -> Guitar Pro 7/8 (.gp), Guitar Pro 5 (.gp5) or MusicXML, in one command.
 
-usage: export_gp.py <project.rpp | stems folder> <out.gp|out.gp5> <track> [<track> ...]
-                    [--cache DIR] [--force] [--drum-map JSON] [--tempo BPM|auto] [--section BAR=NAME ...]
+usage: export_gp.py <project.rpp | .dawproject | stems folder> <out.gp|.gp5|.musicxml|.mxl> <track> [<track> ...]
+                    [--also OUT ...] [--cache DIR] [--force] [--drum-map JSON] [--tempo BPM|auto] [--section BAR=NAME ...]
                     [--chords NAME=trackA+trackB] [--harmony trackA+trackB] [--clean-bass]
 
 Each <track> is a track name as shown in REAPER (case-insensitive, must be unique) or a 0-based
@@ -28,6 +28,10 @@ transcribed bass lines (octaves, leaps, passing-note parasites; see bass_fix.py)
 
 A .gp output is built as GP5 and converted with alphaTab (Node.js, gp_export/gp7; npm ci runs on
 first use). Only .gp files can then get an audio track (add_backing.py) or clean_bass.py.
+
+A .musicxml (or compressed .mxl) output opens in Finale, MuseScore, Dorico, Sibelius... (musicxml.py:
+standard + TAB staves for bass/guitars, chord names with diagrams, sections). --also writes the same
+score to more files in one run, e.g. song.gp --also song.musicxml.
 """
 import argparse, os, re, sys
 
@@ -76,6 +80,8 @@ def main():
     ap.add_argument("project")
     ap.add_argument("out")
     ap.add_argument("tracks", nargs="+", help='track names or 0-based indices, or "NAME=trackA+trackB"')
+    ap.add_argument("--also", action="append", default=[], metavar="OUT",
+                    help="also write the score to this file (.gp, .gp5, .musicxml, .mxl; repeatable)")
     ap.add_argument("--cache")
     ap.add_argument("--force", action="store_true", help="overwrite the output file")
     ap.add_argument("--drum-map", help="drum note map JSON (default gp_export/drum_maps/ezdrummer3.json)")
@@ -86,8 +92,12 @@ def main():
     ap.add_argument("--clean-bass", action="store_true", help="clean transcribed bass tracks")
     a = ap.parse_args()
 
-    if os.path.exists(a.out) and not a.force:
-        sys.exit(f"{a.out} already exists (use --force to overwrite)")
+    outs = [a.out] + a.also
+    for o in outs:
+        if not o.lower().endswith((".gp", ".gp5") + build_gp.XML_EXT):
+            sys.exit(f"unknown output format {o!r}: use .gp, .gp5, .musicxml or .mxl")
+        if os.path.exists(o) and not a.force:
+            sys.exit(f"{o} already exists (use --force to overwrite)")
     P = project.load(a.project)
     cache = a.cache or os.path.join(P.dir, "gp_export_cache")
     sections = parse_sections(a.section)
@@ -155,16 +165,18 @@ def main():
         for name, ix in chord_specs:
             ons = harmony.strums(a.project, ix, bpm, build_gp.SLOTS_PER_QN)
             chord_tracks.append((name, harmony.chord_events(labels, build_gp.SLOTS_PER_QN, ons)))
-    gp7 = a.out.lower().endswith(".gp")
-    gp5_out = os.path.splitext(a.out)[0] + ".tmp.gp5" if gp7 else a.out
-    build_gp.run(a.project, cache, gp5_out, sel, drum_map=a.drum_map, tempo=a.tempo,
+    gp7 = [o for o in outs if o.lower().endswith(".gp")]
+    tmp = {o: os.path.splitext(o)[0] + ".tmp.gp5" for o in gp7}
+    build_gp.run(a.project, cache, [tmp.get(o, o) for o in outs], sel, drum_map=a.drum_map, tempo=a.tempo,
                  sections=sections, groups=groups, chord_tracks=chord_tracks, chord_labels=labels,
                  clean_bass=a.clean_bass)
-    if gp7:
-        try:
-            to_gp7(gp5_out, a.out)
-        finally:
-            os.remove(gp5_out)
+    try:
+        for o in gp7:
+            to_gp7(tmp[o], o)
+    finally:
+        for t in tmp.values():
+            if os.path.exists(t):
+                os.remove(t)
 
 
 def to_gp7(src, dst):

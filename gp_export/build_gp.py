@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import project, transcribe
 
 SLOTS_PER_QN = 4  # 16th-note grid
+XML_EXT = (".musicxml", ".xml", ".mxl")
 MAX_DRUM_SLOTS = 8
 
 DEFAULT_DRUM_MAP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "drum_maps", "ezdrummer3.json")
@@ -277,7 +278,8 @@ def main():
 
 def run(proj_path, tdir, out_path, sel, drum_map=None, tempo=None, sections=None, groups=None,
         chord_tracks=None, chord_labels=None, clean_bass=False):
-    """sel: track indices (folders expanded). groups: [(name, [indices])] each written as ONE track from
+    """out_path: a .gp5 or MusicXML (.musicxml/.xml/.mxl) path, or a list of them.
+    sel: track indices (folders expanded). groups: [(name, [indices])] each written as ONE track from
     the cached transcriptions of its tracks (a drum folder transcribed by drums_audio.py is a group of
     one: its folder index). tempo: BPM overriding the project's (for audio recorded to a click while
     the project kept REAPER's default tempo). sections: {bar number (1-based): name}, replacing the
@@ -418,8 +420,28 @@ def run(proj_path, tdir, out_path, sel, drum_map=None, tempo=None, sections=None
         report.append((tname, kind, tun, len(notes), len(chords),
                        fretter.dropped if fretter else 0, fretter.transposed if fretter else 0))
 
-    with open(out_path, "wb") as f:
-        gp.write(song, f, version=(5, 1, 0))
+    kinds = [r[1] for r in report]
+    outs = [out_path] if isinstance(out_path, str) else list(out_path)
+    for p in outs:
+        if p.lower().endswith(XML_EXT):
+            import musicxml
+            musicxml.write(song, p, kinds, bpm)
+    gp_outs = [p for p in outs if not p.lower().endswith(XML_EXT)]
+    if gp_outs:
+        write_gp5(song, gp_outs)
+    print("track | kind | tuning | src notes | beats w/ notes | dropped | octave-shifted")
+    for r in report:
+        print(" | ".join(str(x) for x in r))
+    ts = collections.Counter((m["num"], m["den"]) for m in measures)
+    print("time signatures:", dict(ts))
+    print("markers:", [(h.number, h.marker.title) for h in song.measureHeaders if h.marker])
+
+
+def write_gp5(song, outs):
+    for out_path in outs:
+        with open(out_path, "wb") as f:
+            gp.write(song, f, version=(5, 1, 0))
+    out_path = outs[0]
     back = gp.parse(out_path)
     print(f"written {out_path}: {len(back.tracks)} tracks, {len(back.measureHeaders)} measures, tempo {back.tempo}")
     # validation: every measure of every track must sum to its time signature length
@@ -433,12 +455,6 @@ def run(proj_path, tdir, out_path, sel, drum_map=None, tempo=None, sections=None
                 if bad <= 5:
                     print(f"  BAD measure {meas.header.number} in {tr.name}: {got} vs {want} sixteenths")
     print("measure length check:", "OK" if bad == 0 else f"{bad} bad measures")
-    print("track | kind | tuning | src notes | beats w/ notes | dropped | octave-shifted")
-    for r in report:
-        print(" | ".join(str(x) for x in r))
-    ts = collections.Counter((m["num"], m["den"]) for m in measures)
-    print("time signatures:", dict(ts))
-    print("markers:", [(h.number, h.marker.title) for h in back.measureHeaders if h.marker])
 
 
 if __name__ == "__main__":
