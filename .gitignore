@@ -9,3 +9,5 @@ gp_export_cache/
 *.wav
 *.mp3
 node_modules/
+build/
+dist/

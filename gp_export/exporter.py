@@ -126,12 +126,14 @@ def export(proj_path, outs, sel=(), groups=(), chord_specs=(), harmony_idxs=None
 def to_gp7(src, dst):
     """GP5 -> Guitar Pro 7/8 .gp through alphaTab (Node.js, gp_export/gp7)."""
     here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gp7")
-    node = shutil.which("node")
+    bundled = os.path.join(here, "node.exe" if os.name == "nt" else "node")  # shipped by the installer / .app
+    node = bundled if os.path.exists(bundled) else shutil.which("node")
     if not node:
         sys.exit("writing .gp needs Node.js (https://nodejs.org); or write a .gp5")
 
     def run(cmd):
-        r = subprocess.run(cmd, cwd=here, capture_output=True, text=True)
+        r = subprocess.run(cmd, cwd=here, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if r.stdout.strip():
             print(r.stdout.strip())
         if r.returncode:

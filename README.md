@@ -4,7 +4,7 @@
 
 Turn a [REAPER](https://www.reaper.fm/) project, a [DAWproject](https://github.com/bitwig/dawproject) file (Bitwig Studio, Studio One, Cubase 14+) — or stems and MIDI files exported from any DAW — into a Guitar Pro score (or MusicXML for Finale, MuseScore, Dorico, Sibelius): MIDI tracks become notation, audio tracks are transcribed (pitched instruments with basic-pitch, multitrack drums from the close mics, rhythm guitars as named chords), and the result can be paired with an embedded, synced audio track in Guitar Pro 8.
 
-Built and tested on Windows with REAPER 7, Guitar Pro 8.1 and Toontrack EZdrummer 3 / EZkeys 2.
+Built and tested on Windows with REAPER 7, Guitar Pro 8.1 and Toontrack EZdrummer 3 / EZkeys 2. macOS builds (Apple Silicon and Intel) are produced and self-tested on GitHub Actions.
 
 ## What it does
 
@@ -26,13 +26,52 @@ Built and tested on Windows with REAPER 7, Guitar Pro 8.1 and Toontrack EZdrumme
 
 ## Install
 
+Download the installer from the [Releases](https://github.com/turtlem/daw2score/releases) page. Everything is bundled: Python, the transcription models and Node.js.
+
+### Windows 10/11 (64-bit)
+
+Run `daw2score-<version>-setup.exe`. It needs no administrator rights (installs for the current user; choose "all users" in the first dialog if you prefer).
+
+The installer is not code-signed yet: Windows SmartScreen may show "Windows protected your PC" — click *More info* → *Run anyway*.
+
+- **Start:** daw2score in the Start menu (or drop a project on the window).
+- **From REAPER:** *Actions → Show action list → New action → Load ReaScript…* and pick `reaper\daw2score_export.lua` in the install folder (default `%LOCALAPPDATA%\Programs\daw2score`). The action saves the project if needed and opens the window on it; give it a shortcut or a toolbar button.
+- **Updates:** *?* (top right) → *Check for updates*. Installing a new version over the old one keeps your settings.
+- **Problems:** the log is `%LOCALAPPDATA%\daw2score\daw2score.log` (link in the *?* dialog); attach it to a [GitHub issue](https://github.com/turtlem/daw2score/issues). `daw2score.exe --selftest report.txt` checks an installation end to end.
+- **Uninstall:** Windows *Settings → Apps*. Settings and the log in `%LOCALAPPDATA%\daw2score` are kept.
+
+### macOS 12+ (Apple Silicon or Intel)
+
+Open `daw2score-<version>-macos-arm64.dmg` (M1/M2/M3/M4… Macs) or `-macos-x86_64.dmg` (Intel Macs) and drag `daw2score.app` onto *Applications*.
+
+The app is not notarized by Apple yet. On the first launch macOS refuses to open it: go to *System Settings → Privacy & Security* and click *Open Anyway* (macOS 15+), or right-click the app → *Open* (macOS 14 and earlier). Only once.
+
+- **From REAPER:** *Actions → Show action list → New action → Load ReaScript…* and pick `daw2score_export.lua` from the disk image (copy it somewhere first, e.g. REAPER's `Scripts` folder). It finds the app in `/Applications` or `~/Applications`.
+- You can also drop a `.rpp`, a `.dawproject` or a stems folder on the app's Dock icon.
+- **Log:** `~/Library/Application Support/daw2score/daw2score.log`. **Uninstall:** move the app to the Bin.
+
+## Install from source (development)
+
 Requires [uv](https://docs.astral.sh/uv/) (`winget install astral-sh.uv`), which provides Python 3.11 itself, and [Node.js](https://nodejs.org/) to write `.gp` files (the GP5 → GP7/8 conversion uses [alphaTab](https://github.com/CoderLine/alphaTab); `npm ci` runs in `gp_export/gp7` on first use).
 
 ```powershell
 git clone <this repo> && cd daw2score
 uv sync
 uv sync --extra gui      # optional: the export window (PySide6)
+uv run python gp_export/selftest.py   # end-to-end check (synthetic song -> .gp + .musicxml)
 ```
+
+### Building the installer
+
+```powershell
+winget install JRSoftware.InnoSetup      # once
+uv sync --extra gui
+uv run python packaging/build.py         # -> dist/daw2score-<version>-setup.exe
+```
+
+`build.py` builds for the platform it runs on: it checks that `gp_export/version.py` and `pyproject.toml` agree, adds a pinned Node.js (downloaded once, SHA-256 checked) and the third-party licenses, freezes the window with PyInstaller (`packaging/daw2score.spec`: a folder on Windows, `daw2score.app` on macOS), runs the self-test on the built app, then compiles `packaging/daw2score.iss` (Windows) or makes a `.dmg` (macOS, `hdiutil`).
+
+The GitHub Actions workflow `.github/workflows/build.yml` runs it on Windows, macOS arm64 and macOS Intel (manually from the *Actions* tab, or on a tag). To release: bump the version in both files, add a `CHANGELOG.md` entry, commit, then `git tag vX.Y.Z && git push --tags`: the workflow builds the three installers and attaches them to a **draft** release with the changelog section as notes; check it and publish it (the window's update check reads the latest published release).
 
 ## Export window
 
@@ -155,4 +194,4 @@ Then run the bridge script in REAPER (it starts automatically on the next launch
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Dependencies keep their own licenses (basic-pitch: Apache-2.0, PyGuitarPro: LGPL-3.0, alphaTab: MPL-2.0).
+MIT, see [LICENSE](LICENSE). Dependencies keep their own licenses (basic-pitch: Apache-2.0, PyGuitarPro: LGPL-3.0, alphaTab: MPL-2.0, Qt/PySide6: LGPL-3.0); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for what the installer bundles.

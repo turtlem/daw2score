@@ -21,6 +21,8 @@ Python is managed by `uv`; `pyproject.toml` pins Python 3.11 for basic-pitch. Wr
 ```powershell
 uv sync [--extra gui]                                  # create .venv (gui = PySide6-Essentials for gui.py)
 uv run python gp_export/gui.py [project]                # export window
+uv run python gp_export/selftest.py                     # end-to-end check on a synthetic song (.gp with audio track + .musicxml)
+uv run python packaging/build.py                        # installer for this OS -> dist/ (.exe needs Inno Setup; .dmg on macOS)
 uv run python gp_export/export_gp.py <project.rpp|.dawproject|stems dir> <out.gp|.gp5|.musicxml|.mxl> <track name|idx|NAME=a+b>... [--also OUT]... [--cache DIR] [--force] [--drum-map JSON]
         [--tempo BPM|auto] [--section BAR=NAME]... [--chords NAME=a+b] [--harmony a+b+c] [--clean-bass]
 uv run python gp_export/clean_bass.py <score.gp> <project.rpp> [--track Bass] [--out OUT.gp]
@@ -32,7 +34,7 @@ uv run python gp_export/build_gp.py <project.rpp> <transcriptions_dir> <out.gp5>
 
 Dependency constraints in `pyproject.toml` are load-bearing: TensorFlow is excluded via `override-dependencies` (TF 2.14 crashes with the numpy it would get; basic-pitch falls back to its ONNX model), `numpy<2` and `setuptools<81` (resampy imports `pkg_resources`). The basic-pitch "tflite/Tensorflow is not installed" warnings are expected.
 
-There are no tests. Each writer validates its own output: `build_gp.py` re-parses the `.gp5` and checks every measure sums to its time signature; `clean_bass.py` and `add_backing.py` re-read the written `.gp`. Keep those checks passing.
+There are no unit tests; `selftest.py` is the end-to-end check (also run on the frozen exe by `build.py`). Each writer validates its own output: `build_gp.py` re-parses the `.gp5` and checks every measure sums to its time signature; `clean_bass.py` and `add_backing.py` re-read the written `.gp`. Keep those checks passing.
 
 ## gp_export architecture
 
@@ -57,3 +59,15 @@ Pipeline: REAPER track selection → notes in quarter-note time → 16th-note gr
 - `drums_audio.py` — onset detection per close mic on a band-limited signal; bleed rejected by comparing each hit's level ratio to a reference mic against the median ratio (`ratio_k`). Hi-hat open = long high-band decay (longer when a snare hit coincides); crash = long decay in the overheads. Output = cache json with profile kind `drums` (already GM, the plugin drum map is skipped).
 - `harmony.py` — beat-synchronous chroma of the harmony tracks (loudness-weighted, chord track 1.5x) + bass chroma for the root, maj/m/5/sus2/sus4 templates, Viterbi smoothing, min 2 beats per chord. Strums from the chord track's onsets; a chord with no strum is held. Voicings: open shapes table, else E/A-shape barres (standard tuning). `build_gp.chord_diagram` attaches names/diagrams.
 - `bass_fix.py` — note-list bass cleanup at export (`--clean-bass`): picks one note per 16th (chord root > chord tone > loudest), `clean_bass.Spectra` octave check, leaps > 9 semitones from the neighbours' median moved by octaves, range E1–F#3, removes short off-kick non-chord/quiet notes, merges fragments. Kicks come from the exported drum track.
+
+## Packaging (packaging/, .github/workflows/build.yml)
+
+- Windows is built locally or in CI; **macOS only in CI** (no Mac here): `build.yml` runs `build.py` on `windows-latest`, `macos-15` (arm64) and `macos-15-intel`, uploads the artifacts, and on a `v*` tag creates a draft release. The CI self-test is the only check of the Mac builds; nobody has opened them on a real Mac yet.
+- macOS dependency pins (`pyproject.toml`): onnxruntime < 1.24 and numba < 0.63 on Intel Macs only (last versions with macOS x86_64 wheels); `coremltools` overridden out so basic-pitch uses the ONNX model on every platform. Check `uv lock` still resolves both Mac architectures after dependency changes.
+- Platform code: `gui.APP_DIR` (`%LOCALAPPDATA%\daw2score` / `~/Library/Application Support/daw2score`), `App.event` handles macOS `FileOpen` (Dock/Finder/`open -a`), the bundled node is `node.exe` or `node`; the REAPER Lua action handles both OSes.
+
+- Version: `gp_export/version.py` is the source; `pyproject.toml` must match (`build.py` refuses otherwise); shown in the window title and the *?* dialog, compared to the latest GitHub release tag (`vX.Y.Z`) by *Check for updates* (only network call of the app, on click).
+- `daw2score.spec`: PyInstaller one-folder, windowed. Every `gp_export/*.py` is a hidden import (many are imported lazily); data: `gp7` (mjs + node_modules), `drum_maps`, `assets`, basic-pitch model, librosa/resampy/mir_eval data. Bundled modules keep their `__file__` in `sys._MEIPASS` (`_internal`, or `Contents/Frameworks` with data symlinked from `Resources`), so `os.path.dirname(__file__)` paths work frozen. Node (`DAW2SCORE_NODE`, prepared by `build.py`) is a PyInstaller binary in `gp7/` so the .app signature covers it (`exporter.to_gp7` prefers it to the PATH one; subprocesses use `CREATE_NO_WINDOW`); `build/licenses` (dist-info license files of every runtime package, alphaTab, Node, LGPL/GPL texts) is bundled as data. Windows: the REAPER action is copied to `reaper/` next to the exe; macOS: the `.dmg` holds the app, an Applications link, the Lua action and a read-me (unsigned: ad-hoc signature only, no notarization).
+- Frozen app: no console, so `gui.open_log()` points stdout/stderr at `%LOCALAPPDATA%\daw2score\daw2score.log` (everything shown in the window log is written there too); `sys.excepthook` shows unexpected errors; `NUMBA_CACHE_DIR` goes to the same folder. `daw2score.exe --selftest REPORT` runs `selftest.py` without a window.
+- `daw2score.iss`: per-user install by default (`PrivilegesRequired=lowest`, override dialog), fixed `AppId` (never change it), English/French, `_internal` wiped on upgrade, `LZMAUseSeparateProcess` (the 32-bit compiler runs out of memory otherwise). Not code-signed.
+- Icon: `packaging/make_icon.py` draws it with Qt and writes `gp_export/assets/daw2score.ico` (PNG-in-ICO, 16–256 px).

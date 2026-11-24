@@ -6,22 +6,33 @@ tempo, sections and output formats, then export (same code as export_gp.py, thro
 
 Settings are remembered per project in <project dir>/gp_export_cache/gui_<project name>.json.
 """
-import contextlib, glob, json, os, sys, traceback
+import contextlib, datetime, glob, json, os, sys, traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from PySide6.QtCore import Qt, QThread, Signal, QObject, QSettings
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt, QThread, Signal, QObject, QSettings, QUrl
+from PySide6.QtCore import QEvent
+from PySide6.QtGui import QFont, QIcon, QFontDatabase
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QLabel,
     QPushButton, QLineEdit, QTreeWidget, QTreeWidgetItem, QComboBox, QTabWidget, QGroupBox, QRadioButton,
     QDoubleSpinBox, QTableWidget, QTableWidgetItem, QCheckBox, QPlainTextEdit, QProgressBar, QFileDialog,
-    QMessageBox, QSplitter, QHeaderView, QButtonGroup, QAbstractItemView)
+    QMessageBox, QSplitter, QHeaderView, QButtonGroup, QAbstractItemView, QDialog, QDialogButtonBox)
 
 KOFI_URL = "https://ko-fi.com/vincentmouge"
+GITHUB_URL = "https://github.com/turtlem/daw2score"
+RELEASES_API = "https://api.github.com/repos/turtlem/daw2score/releases/latest"
 
 import project, exporter, transcribe
+from version import __version__
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+FROZEN = getattr(sys, "frozen", False)  # running from the installed build (PyInstaller)
+if sys.platform == "darwin":
+    APP_DIR = os.path.expanduser("~/Library/Application Support/daw2score")
+else:
+    APP_DIR = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "daw2score")
+LOG_PATH = os.path.join(APP_DIR, "daw2score.log")
+LOG = None  # log file, opened by main(); everything shown in the window's log is also written there
 LANG = "en"  # "en" or "fr", set by main() from the saved choice or the system language
 
 
@@ -129,7 +140,7 @@ def track_keys(trs):
 class Main(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("daw2score")
+        self.setWindowTitle(f"daw2score {__version__}")
         self.resize(1100, 760)
         self.setAcceptDrops(True)
         self.P = None
@@ -157,6 +168,11 @@ class Main(QMainWindow):
         top.addWidget(b_file)
         top.addWidget(b_dir)
         top.addWidget(self.lang)
+        b_about = QPushButton("?")
+        b_about.setFixedWidth(28)
+        b_about.setToolTip(T("À propos de daw2score", "About daw2score"))
+        b_about.clicked.connect(lambda: About(self).exec())
+        top.addWidget(b_about)
         lay.addLayout(top)
         self.info = QLabel(" ")
         self.info.setStyleSheet("color: palette(mid);")
@@ -170,7 +186,9 @@ class Main(QMainWindow):
         split.addWidget(self.tabs)
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
-        self.log.setFont(QFont("Consolas", 9))
+        mono = QFontDatabase.systemFont(QFontDatabase.FixedFont)
+        mono.setPointSize(9 if sys.platform != "darwin" else 11)
+        self.log.setFont(mono)
         self.log.setMaximumBlockCount(5000)
         split.addWidget(self.log)
         split.setSizes([560, 160])
@@ -776,6 +794,7 @@ class Main(QMainWindow):
         self._append_log(s + "\n")
 
     def _append_log(self, s):
+        log_write(s)
         self.log.moveCursor(self.log.textCursor().MoveOperation.End)
         self.log.insertPlainText(s)
         self.log.ensureCursorVisible()
@@ -793,19 +812,158 @@ class Main(QMainWindow):
             self.status.setText("")
 
 
+# ---------------------------------------------------------------- about, updates, log file
+def version_tuple(v):
+    return tuple(int(x) for x in v.lstrip("vV").split("-")[0].split(".") if x.isdigit())
+
+
+def latest_release():
+    """-> (version, page url) of the latest GitHub release. Sends nothing but the request itself."""
+    import urllib.request
+    req = urllib.request.Request(RELEASES_API, headers={"User-Agent": f"daw2score/{__version__}",
+                                                        "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(req, timeout=8) as r:
+        d = json.load(r)
+    return d["tag_name"].lstrip("vV"), d["html_url"]
+
+
+def notices_path():
+    """Third-party licenses: the licenses folder of the installed build, else the notices file."""
+    lic = os.path.join(HERE, "licenses")  # bundled next to the modules (packaging/build.py)
+    return lic if os.path.isdir(lic) else os.path.join(os.path.dirname(HERE), "THIRD_PARTY_NOTICES.md")
+
+
+class App(QApplication):
+    """macOS sends files opened from the Finder / Dock (or `open -a daw2score file`) as FileOpen events."""
+    def event(self, e):
+        if e.type() == QEvent.FileOpen and e.file():
+            w = self.property("main_window")
+            if w is not None:
+                w.load(e.file())
+            else:
+                self.pending = e.file()
+            return True
+        return super().event(e)
+
+
+class About(QDialog):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle(T("À propos de daw2score", "About daw2score"))
+        lay = QVBoxLayout(self)
+        text = QLabel(
+            f"<h2>daw2score {__version__}</h2>"
+            + T("<p>Partitions Guitar Pro et MusicXML à partir de projets REAPER, DAWproject ou de stems + MIDI.</p>",
+                "<p>Guitar Pro and MusicXML scores from REAPER projects, DAWproject files or stems + MIDI.</p>")
+            + f'<p><a href="{GITHUB_URL}">{GITHUB_URL}</a><br>'
+            + f'<a href="{KOFI_URL}">☕ {T("Soutenir le projet sur Ko-fi", "Support the project on Ko-fi")}</a></p>'
+            + T("<p>Licence MIT. Composants tiers : ", "<p>MIT license. Third-party components: ")
+            + f'<a href="{QUrl.fromLocalFile(notices_path()).toString()}">{T("licences", "licenses")}</a> '
+            + "(Qt / PySide6 LGPL-3.0, alphaTab MPL-2.0, basic-pitch Apache-2.0, librosa ISC, Node.js MIT…).</p>"
+            + T("<p>Journal : ", "<p>Log: ")
+            + f'<a href="{QUrl.fromLocalFile(APP_DIR).toString()}">{LOG_PATH}</a></p>')
+        text.setTextFormat(Qt.RichText)
+        text.setOpenExternalLinks(True)
+        text.setWordWrap(True)
+        text.setMinimumWidth(460)
+        lay.addWidget(text)
+        self.upd = QLabel("")
+        self.upd.setOpenExternalLinks(True)
+        self.upd.setWordWrap(True)
+        lay.addWidget(self.upd)
+        bb = QDialogButtonBox(QDialogButtonBox.Close)
+        chk = bb.addButton(T("Vérifier les mises à jour", "Check for updates"), QDialogButtonBox.ActionRole)
+        chk.clicked.connect(self.check)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def check(self):
+        self.upd.setText(T("Recherche…", "Checking…"))
+        QApplication.processEvents()
+        try:
+            v, url = latest_release()
+        except Exception as e:  # noqa: BLE001 - offline, no release yet, rate limit...
+            if getattr(e, "code", None) == 404:
+                self.upd.setText(T("Aucune version publiée pour l'instant.", "No published release yet."))
+                return
+            self.upd.setText(T("Impossible de vérifier : ", "Could not check: ") + str(e))
+            return
+        if version_tuple(v) > version_tuple(__version__):
+            self.upd.setText(f'<b>{T("Nouvelle version", "New version")} {v}</b> : '
+                             f'<a href="{url}">{T("télécharger", "download")}</a>')
+        else:
+            self.upd.setText(T(f"daw2score {__version__} est à jour.", f"daw2score {__version__} is up to date."))
+
+
+def log_write(s):
+    if LOG:
+        try:
+            LOG.write(s)
+        except (OSError, ValueError):
+            pass
+
+
+def open_log():
+    """Append to APP_DIR/daw2score.log (previous one kept as .old above 2 MB)."""
+    global LOG
+    try:
+        os.makedirs(APP_DIR, exist_ok=True)
+        if os.path.exists(LOG_PATH) and os.path.getsize(LOG_PATH) > 2_000_000:
+            os.replace(LOG_PATH, LOG_PATH + ".old")
+        LOG = open(LOG_PATH, "a", encoding="utf-8", buffering=1)
+        LOG.write(f"\n===== daw2score {__version__} {datetime.datetime.now():%Y-%m-%d %H:%M:%S} =====\n")
+    except OSError:
+        LOG = None
+    if sys.stdout is None:  # windowed build: no console
+        sys.stdout = LOG or open(os.devnull, "w")
+    if sys.stderr is None:
+        sys.stderr = LOG or open(os.devnull, "w")
+
+
+def excepthook(etype, value, tb):
+    """An unexpected error in the window itself: logged and shown; the window keeps running."""
+    msg = "".join(traceback.format_exception(etype, value, tb))
+    log_write(msg)
+    try:
+        sys.__stderr__.write(msg)
+    except (AttributeError, OSError, ValueError):
+        pass
+    box = QMessageBox(QMessageBox.Critical, "daw2score",
+                      T("Erreur inattendue. Détails dans le journal :\n", "Unexpected error. Details in the log:\n")
+                      + LOG_PATH + "\n\n" + f"{etype.__name__}: {value}")
+    box.setDetailedText(msg)
+    box.exec()
+
+
 def main():
-    app = QApplication(sys.argv)
+    open_log()
+    if FROZEN:  # numba (librosa) cannot cache next to the bundled modules
+        os.environ.setdefault("NUMBA_CACHE_DIR", os.path.join(APP_DIR, "numba_cache"))
+    if len(sys.argv) > 1 and sys.argv[1] == "--selftest":  # installation check, no window
+        import selftest
+        sys.exit(0 if selftest.run(sys.argv[2] if len(sys.argv) > 2 else None) else 1)
+    sys.excepthook = excepthook
+    app = App(sys.argv)
+    app.pending = None
     app.setApplicationName("daw2score")
+    app.setApplicationVersion(__version__)
+    icon = os.path.join(HERE, "assets", "daw2score.ico" if os.name == "nt" else "daw2score.png")
+    if os.path.exists(icon):
+        app.setWindowIcon(QIcon(icon))
     global LANG
     from PySide6.QtCore import QLocale
     saved = QSettings("daw2score", "daw2score").value("lang")
     LANG = saved if saved in ("en", "fr") else ("fr" if QLocale.system().language() == QLocale.French else "en")
     w = Main()
+    app.setProperty("main_window", w)
     w.show()
-    if len(sys.argv) > 1:
-        w.load(sys.argv[1])
+    start = next((a for a in sys.argv[1:] if not a.startswith("-")), None) or app.pending
+    if start:
+        w.load(start)
     sys.exit(app.exec())
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
     main()
