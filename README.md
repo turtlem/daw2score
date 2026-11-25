@@ -69,7 +69,7 @@ uv sync --extra gui
 uv run python packaging/build.py         # -> dist/daw2score-<version>-setup.exe
 ```
 
-`build.py` builds for the platform it runs on: it checks that `gp_export/version.py` and `pyproject.toml` agree, adds a pinned Node.js (downloaded once, SHA-256 checked) and the third-party licenses, freezes the window with PyInstaller (`packaging/daw2score.spec`: a folder on Windows, `daw2score.app` on macOS), runs the self-test on the built app, then compiles `packaging/daw2score.iss` (Windows) or makes a `.dmg` (macOS, `hdiutil`).
+`build.py` builds for the platform it runs on: it checks that `gp_export/version.py` and `pyproject.toml` agree, adds a pinned Node.js (downloaded once, SHA-256 checked, retried on network errors) and the third-party licenses, freezes the window with PyInstaller (`packaging/daw2score.spec`: a folder on Windows, `daw2score.app` on macOS), runs the self-test on the built app, then compiles `packaging/daw2score.iss` (Windows) or makes a `.dmg` (macOS, `hdiutil`).
 
 The GitHub Actions workflow `.github/workflows/build.yml` runs it on Windows, macOS arm64 and macOS Intel (manually from the *Actions* tab, or on a tag). To release: bump the version in both files, add a `CHANGELOG.md` entry, commit, then `git tag vX.Y.Z && git push --tags`: the workflow builds the three installers and attaches them to a **draft** release with the changelog section as notes; check it and publish it (the window's update check reads the latest published release).
 

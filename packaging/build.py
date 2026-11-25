@@ -9,7 +9,7 @@ Steps: check the version numbers agree, npm ci for alphaTab, a pinned Node.js (d
 SHA-256 checked), the third-party license files, PyInstaller (packaging/daw2score.spec), the self-test on the
 built app, then the installer / disk image. Macs are built on GitHub Actions (.github/workflows/build.yml).
 """
-import hashlib, importlib.metadata as md, os, platform, re, shutil, subprocess, sys, tarfile, urllib.request, zipfile
+import hashlib, importlib.metadata as md, os, platform, re, shutil, subprocess, sys, tarfile, time, urllib.request, zipfile
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SRC = os.path.join(ROOT, "gp_export")
@@ -19,8 +19,7 @@ MAC = sys.platform == "darwin"
 WIN = os.name == "nt"
 NODE_VERSION = "24.20.0"
 NODE_URL = f"https://nodejs.org/dist/v{NODE_VERSION}/"
-GNU = {"LGPL-3.0.txt": "https://www.gnu.org/licenses/lgpl-3.0.txt",
-       "GPL-3.0.txt": "https://www.gnu.org/licenses/gpl-3.0.txt"}
+GNU = ("LGPL-3.0.txt", "GPL-3.0.txt")  # kept in packaging/licenses (gnu.org downloads time out in CI)
 DEV_ONLY = {"pyinstaller", "pyinstaller-hooks-contrib", "altgraph", "pefile", "pywin32-ctypes", "macholib"}
 
 
@@ -40,12 +39,20 @@ def version():
     return __version__
 
 
-def download(url, dst):
+def download(url, dst, tries=4):
     if not os.path.exists(dst):
-        print("downloading", url, flush=True)
-        req = urllib.request.Request(url, headers={"User-Agent": "daw2score-build"})
-        with urllib.request.urlopen(req, timeout=300) as r, open(dst + ".part", "wb") as f:
-            shutil.copyfileobj(r, f)
+        for k in range(tries):
+            print("downloading", url, flush=True)
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "daw2score-build"})
+                with urllib.request.urlopen(req, timeout=120) as r, open(dst + ".part", "wb") as f:
+                    shutil.copyfileobj(r, f)
+                break
+            except OSError as e:  # timeouts, resets: CI networks are flaky
+                if k == tries - 1:
+                    raise
+                print(f"  failed ({e}), retrying", flush=True)
+                time.sleep(10 * (k + 1))
         os.replace(dst + ".part", dst)
     return dst
 
@@ -123,8 +130,8 @@ def licenses(node_license):
             src = dist.locate_file(fp)
             if os.path.isfile(src):
                 shutil.copy(src, os.path.join(dst, f"{k}-{fp.name}"))
-    for fn, url in GNU.items():  # Qt / PySide6 (LGPL-3.0), PyGuitarPro (LGPL-3.0)
-        shutil.copy(download(url, os.path.join(BUILD, fn)), os.path.join(out, fn))
+    for fn in GNU:  # Qt / PySide6 (LGPL-3.0), PyGuitarPro (LGPL-3.0)
+        shutil.copy(os.path.join(ROOT, "packaging", "licenses", fn), os.path.join(out, fn))
     at = os.path.join(SRC, "gp7", "node_modules", "@coderline", "alphatab")
     os.makedirs(os.path.join(out, "alphaTab"), exist_ok=True)
     for fn in os.listdir(at):
