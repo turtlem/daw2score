@@ -19,20 +19,31 @@ SAME = 0.3        # cosine similarity (standardized features) above which two se
 PCT = 80          # novelty percentile a boundary must reach
 
 
-def bar_times(info, bpm, end_s):
-    info = dict(info, tempo=bpm)
+def export_info(info, tempo=None):
+    """The measure layout the export will use: a tempo override drops the project's tempo map
+    (time-signature changes included), exactly as build_gp.run does."""
+    info = dict(info)
+    if tempo:
+        info["tempo"], info["tempo_points"] = float(tempo), []
+    return info
+
+
+def bar_times(info, end_s):
+    bpm = info["tempo"]
     ms = build_gp.build_measures(info, end_s * bpm / 60.0)
     return [m["qn"] * 60.0 / bpm for m in ms] + [(ms[-1]["qn"] + ms[-1]["len"]) * 60.0 / bpm]
 
 
-def features(proj_path, idxs, bpm):
+def features(proj_path, idxs, tempo=None):
     import librosa
     P = project.load(proj_path)
+    info = export_info(P.info, tempo)
+    bpm = info["tempo"]
     trs = [t for t in build_gp.expand_selection(P.tracks, idxs)]
     end = max((i["position"] + i["length"] for t in trs for i in t["items"] if not i["mute"]), default=0)
     if end <= 0:
         raise SystemExit("nothing to analyse")
-    edges = bar_times(P.info, bpm, end)
+    edges = bar_times(info, end)
     nb = len(edges) - 1
     sr = transcribe.SR
     rows, mix = [], np.zeros(int((end + 1) * sr), np.float32)
@@ -72,9 +83,9 @@ def features(proj_path, idxs, bpm):
     return np.vstack([lv * 1.5, cb]), lv
 
 
-def propose(proj_path, idxs, bpm):
-    """-> {bar number (1-based): label}"""
-    F, lv = features(proj_path, idxs, bpm)
+def propose(proj_path, idxs, tempo=None):
+    """-> {bar number (1-based): label}. tempo: the export's tempo override (None = project tempo map)."""
+    F, lv = features(proj_path, idxs, tempo)
     nb = F.shape[1]
     active = lv.max(0) > 0.25 if len(lv) else np.ones(nb, bool)
     if not active.any():
@@ -123,8 +134,7 @@ def main():
         k = args.index("--tempo")
         bpm = float(args[k + 1])
         del args[k:k + 2]
-    p = project.load(args[0])
-    print(propose(args[0], [int(a) for a in args[1:]], bpm or p.info["tempo"]))
+    print(propose(args[0], [int(a) for a in args[1:]], bpm))
 
 
 if __name__ == "__main__":

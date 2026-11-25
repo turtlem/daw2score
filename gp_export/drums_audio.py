@@ -197,15 +197,21 @@ def transcribe_folder(proj_path, folder_idx):
 def run(proj_path, out_dir, folder_idx):
     os.makedirs(out_dir, exist_ok=True)
     out = os.path.join(out_dir, f"{folder_idx}.json")
+    name = project.load(proj_path).tracks[folder_idx]["name"]
     if os.path.exists(out):
-        print(f"cached {out}")
-        return out
+        try:
+            cached = json.load(open(out, encoding="utf-8")).get("name")
+        except (ValueError, OSError):
+            cached = None
+        if cached == name:  # the same folder (indices shift when tracks are added)
+            print(f"cached {out}")
+            return out
     print(f"drum transcription of folder [{folder_idx}]")
     notes = transcribe_folder(proj_path, folder_idx)
     import collections
     print("  hits:", dict(collections.Counter(n["pitch"] for n in notes)))
     with open(out, "w", encoding="utf-8") as f:
-        json.dump({"profile": {"kind": "drums"}, "notes": notes}, f)
+        json.dump({"index": folder_idx, "name": name, "profile": {"kind": "drums"}, "notes": notes}, f)
     return out
 
 

@@ -90,8 +90,9 @@ def main():
 
 
 def run(proj_path, out_dir, wanted, roles=None, log=print):
-    """roles: {track index: kind} overriding the kind guessed from the name; a cached transcription
-    made with another kind is redone."""
+    """roles: {track index: kind} overriding the kind guessed from the name. A cached transcription is
+    reused only if it belongs to the same track name (indices shift when tracks are added) and was made
+    with the same basic-pitch settings (the kind label alone does not matter: keys = other)."""
     roles = roles or {}
     os.makedirs(out_dir, exist_ok=True)
     trs = project.load(proj_path).tracks
@@ -105,10 +106,14 @@ def run(proj_path, out_dir, wanted, roles=None, log=print):
         p = profile(t["name"], roles.get(t["index"]))
         if os.path.exists(jpath):
             try:
-                cached = json.load(open(jpath, encoding="utf-8"))["profile"]["kind"]
-            except (ValueError, KeyError):
-                cached = None
-            if cached == p["kind"]:
+                c = json.load(open(jpath, encoding="utf-8"))
+                same = c.get("name") == t["name"] and {k: v for k, v in c["profile"].items() if k != "kind"}                     == {k: v for k, v in p.items() if k != "kind"}
+            except (ValueError, KeyError, AttributeError, OSError):
+                same = False
+            if same:
+                if c["profile"].get("kind") != p["kind"]:  # same settings, new label: keep the notes
+                    c["profile"] = p
+                    json.dump(c, open(jpath, "w", encoding="utf-8"))
                 log(f'[{t["index"]}] {t["name"]}: cached')
                 continue
         log(f'[{t["index"]}] {t["name"]}: transcribing as {p["kind"]}...')

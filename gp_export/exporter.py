@@ -62,6 +62,10 @@ def export(proj_path, outs, sel=(), groups=(), chord_specs=(), harmony_idxs=None
     elif os.path.isdir(proj_path) and not P.info.get("tempo_source"):
         print("WARNING: stems folder without a MIDI file: tempo 120 assumed (use --tempo BPM or --tempo auto)")
 
+    for i, k in roles.items():
+        if k == "drums" and not trs[i]["is_folder"] and not any(it.get("src_type") == "MIDI" for it in trs[i]["items"]):
+            print(f"WARNING: role drums ignored for the audio track {trs[i]['name']!r}: only MIDI tracks and "
+                  "folders of drum mics can be written as drums")
     sel_tracks, drum_groups, drum_folders = [], [], []
     for i in sel:
         if is_audio_drum_folder(trs, trs[i], roles):

@@ -457,6 +457,8 @@ class Main(QMainWindow):
                 for k, label in role_labels():
                     if typ == "drum_folder" and k not in (None, "drums"):
                         continue
+                    if typ == "audio" and k == "drums":  # one audio track cannot be split into drum hits
+                        continue
                     combo.addItem(f"Auto ({kind_label(auto)})" if k is None else label, k)
                 combo.setProperty("track", t["index"])
                 self.tree.setItemWidget(it, COL_ROLE, combo)
@@ -468,23 +470,38 @@ class Main(QMainWindow):
     def _item_changed(self, it, col):
         """Folder check -> children; columns other than the name are not editable."""
         if col == COL_TRACK and it.childCount():
-            idx = it.data(COL_TRACK, Qt.UserRole)
-            drum = track_type(self.P.tracks, self.P.tracks[idx]) == "drum_folder"
             self.tree.blockSignals(True)
-            for k in range(it.childCount()):
-                c = it.child(k)
-                if drum:  # the folder itself is the drum track: its mics are not exported one by one
-                    c.setCheckState(COL_TRACK, Qt.Unchecked)
-                    c.setDisabled(it.checkState(COL_TRACK) == Qt.Checked)
-                else:
-                    self._check_recursive(c, it.checkState(COL_TRACK))
+            if self._is_drum_folder(it):
+                self._apply_drum_rule(it)
+            else:
+                for k in range(it.childCount()):
+                    self._check_recursive(it.child(k), it.checkState(COL_TRACK))
             self.tree.blockSignals(False)
+
+    def _is_drum_folder(self, it):
+        return track_type(self.P.tracks, self.P.tracks[it.data(COL_TRACK, Qt.UserRole)]) == "drum_folder"
+
+    def _apply_drum_rule(self, it):
+        """The drum folder itself is the drum track: its mics are not exported one by one."""
+        on = it.checkState(COL_TRACK) == Qt.Checked
+        for k in range(it.childCount()):
+            c = it.child(k)
+            c.setCheckState(COL_TRACK, Qt.Unchecked)
+            c.setDisabled(on)
 
     def _check_recursive(self, it, state):
         if it.flags() & Qt.ItemIsUserCheckable and not it.isDisabled():
             it.setCheckState(COL_TRACK, state)
+        if it.childCount() and self._is_drum_folder(it):
+            self._apply_drum_rule(it)
+            return
         for k in range(it.childCount()):
             self._check_recursive(it.child(k), state)
+
+    @staticmethod
+    def exportable(it):
+        """A track row that can be exported (it has the score-name / audio columns)."""
+        return it.data(COL_AUDIO, Qt.CheckStateRole) is not None
 
     def role_of(self, idx):
         combo = self.tree.itemWidget(self.items[idx], COL_ROLE)
@@ -502,8 +519,8 @@ class Main(QMainWindow):
         for t in self.P.tracks:
             it = self.items[t["index"]]
             d = {"checked": it.checkState(COL_TRACK) == Qt.Checked}
-            if it.text(COL_NAME):
-                d["name"] = it.text(COL_NAME)
+            if self.exportable(it):
+                d["name"] = it.text(COL_NAME).strip() or t["name"]
                 d["audio"] = it.checkState(COL_AUDIO) == Qt.Checked
                 d["harmony"] = it.data(COL_HARM, Qt.CheckStateRole) is not None and it.checkState(COL_HARM) == Qt.Checked
                 d["role"] = self.role_of(t["index"])
@@ -544,8 +561,8 @@ class Main(QMainWindow):
             if not d:
                 continue
             it = self.items[t["index"]]
-            if it.text(COL_NAME) and "name" in d:
-                it.setText(COL_NAME, d["name"])
+            if self.exportable(it) and "name" in d:
+                it.setText(COL_NAME, d["name"] or t["name"])
                 it.setCheckState(COL_AUDIO, Qt.Checked if d.get("audio") else Qt.Unchecked)
                 if it.data(COL_HARM, Qt.CheckStateRole) is not None:
                     it.setCheckState(COL_HARM, Qt.Checked if d.get("harmony") else Qt.Unchecked)
@@ -557,8 +574,8 @@ class Main(QMainWindow):
         self.tree.blockSignals(False)
         for t in self.P.tracks:  # re-apply folder rules (drum folder disables its mics)
             it = self.items[t["index"]]
-            if it.childCount() and track_type(self.P.tracks, t) == "drum_folder":
-                self._item_changed(it, COL_TRACK)
+            if it.childCount() and self._is_drum_folder(it):
+                self._apply_drum_rule(it)
         self.t_spin.blockSignals(True)
         self.t_spin.setValue(s.get("tempo", self.t_spin.value()))
         self.t_spin.blockSignals(False)
@@ -580,6 +597,20 @@ class Main(QMainWindow):
         self.o_backing_name.setText(s.get("backing_name", ""))
 
     def closeEvent(self, e):
+        if self.job and self.job.isRunning() and not getattr(self, "replaced", False):
+            r = QMessageBox.question(
+                self, "daw2score",
+                T("Un traitement est en cours (export, transcription ou analyse).\n\nQuitter quand même ? "
+                  "Les fichiers en cours d'écriture seront incomplets.",
+                  "A job is running (export, transcription or analysis).\n\nQuit anyway? "
+                  "Files being written will be incomplete."),
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if r != QMessageBox.Yes:
+                e.ignore()
+                return
+            self.save_settings()
+            log_write("\nquit during a running job\n")
+            os._exit(1)  # the worker thread cannot be stopped cleanly; destroying it would abort Qt
         self.save_settings()
         super().closeEvent(e)
 
@@ -627,6 +658,12 @@ class Main(QMainWindow):
     def copy_markers(self):
         if not self.P:
             return
+        if self.t_group.checkedId() == 2:
+            QMessageBox.information(self, "daw2score", T("Détecte d'abord le tempo (bouton « Détecter maintenant ») : "
+                                                         "les mesures en dépendent.",
+                                                         "Detect the tempo first (Detect now button): "
+                                                         "the bars depend on it."))
+            return
         self.set_sections({self.bar_of(t): n for t, n in self.P.info["markers"]})
         self.s_custom.setChecked(True)
 
@@ -640,12 +677,13 @@ class Main(QMainWindow):
                                                          "Detect the tempo first (Detect now button)."))
             return
         bpm, path = self.current_bpm(), self.path_edit.text()
+        override = bpm if self.t_group.checkedId() == 1 else None  # as exporter.export(tempo=...)
 
         def run():
             import sections
             print(T(f"analyse des sections ({len(idxs)} pistes, {bpm:g} BPM)...",
                     f"analysing sections ({len(idxs)} tracks, {bpm:g} BPM)..."))
-            return sections.propose(path, idxs, bpm)
+            return sections.propose(path, idxs, override)
         self.start(run, self._sections_done, T("Analyse des sections…", "Analysing sections…"))
 
     def _sections_done(self, secs):
@@ -678,7 +716,7 @@ class Main(QMainWindow):
         out = []
         for t in self.P.tracks:
             it = self.items[t["index"]]
-            if it.checkState(COL_TRACK) != Qt.Checked or it.isDisabled() or not it.text(COL_NAME):
+            if it.checkState(COL_TRACK) != Qt.Checked or it.isDisabled() or not self.exportable(it):
                 continue
             out.append((t["index"], self.role_of(t["index"]), it.text(COL_NAME).strip() or t["name"]))
         return out
@@ -700,12 +738,13 @@ class Main(QMainWindow):
         backing = []
         for t in self.P.tracks:
             it = self.items[t["index"]]
-            if it.text(COL_NAME) and it.checkState(COL_AUDIO) == Qt.Checked:
+            if self.exportable(it) and it.checkState(COL_AUDIO) == Qt.Checked:
                 if t["is_folder"]:
                     import build_gp
                     backing += [c["index"] for c in build_gp.expand_selection(self.P.tracks, [t["index"]])]
                 else:
                     backing.append(t["index"])
+        backing = list(dict.fromkeys(backing))  # a folder and one of its tracks both ticked: mix it once
         exts = [e for e, c in self.o_formats.items() if c.isChecked()]
         if not exts:
             raise ValueError(T("Choisis au moins un format de sortie (onglet Sortie).",
@@ -785,6 +824,7 @@ class Main(QMainWindow):
             w.load(self.path_edit.text())
         w.show()
         QApplication.instance().setProperty("main_window", w)
+        self.replaced = True
         self.close()
 
     def note(self, s):
@@ -846,6 +886,24 @@ class App(QApplication):
         return super().event(e)
 
 
+_THREADS = set()
+
+
+class Fetch(QThread):
+    """fn() in a thread without touching stdout (unlike Job); done(result or the exception)."""
+    done = Signal(object)
+
+    def __init__(self, fn):
+        super().__init__()
+        self.fn = fn
+
+    def run(self):
+        try:
+            self.done.emit(self.fn())
+        except Exception as e:  # noqa: BLE001 - shown in the dialog
+            self.done.emit(e)
+
+
 class About(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
@@ -874,20 +932,29 @@ class About(QDialog):
         bb = QDialogButtonBox(QDialogButtonBox.Close)
         chk = bb.addButton(T("Vérifier les mises à jour", "Check for updates"), QDialogButtonBox.ActionRole)
         chk.clicked.connect(self.check)
+        self._fetch = None
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
 
     def check(self):
-        self.upd.setText(T("Recherche…", "Checking…"))
-        QApplication.processEvents()
-        try:
-            v, url = latest_release()
-        except Exception as e:  # noqa: BLE001 - offline, no release yet, rate limit...
-            if getattr(e, "code", None) == 404:
-                self.upd.setText(T("Aucune version publiée pour l'instant.", "No published release yet."))
-                return
-            self.upd.setText(T("Impossible de vérifier : ", "Could not check: ") + str(e))
+        if self._fetch is not None:
             return
+        self.upd.setText(T("Recherche…", "Checking…"))
+        self._fetch = Fetch(latest_release)
+        self._fetch.done.connect(self._checked)
+        _THREADS.add(self._fetch)  # kept alive even if the dialog is closed first
+        self._fetch.finished.connect(lambda th=self._fetch: _THREADS.discard(th))
+        self._fetch.start()
+
+    def _checked(self, res):
+        self._fetch = None
+        if isinstance(res, Exception):  # offline, no release yet, rate limit...
+            if getattr(res, "code", None) == 404:
+                self.upd.setText(T("Aucune version publiée pour l'instant.", "No published release yet."))
+            else:
+                self.upd.setText(T("Impossible de vérifier : ", "Could not check: ") + str(res))
+            return
+        v, url = res
         if version_tuple(v) > version_tuple(__version__):
             self.upd.setText(f'<b>{T("Nouvelle version", "New version")} {v}</b> : '
                              f'<a href="{url}">{T("télécharger", "download")}</a>')
@@ -960,7 +1027,10 @@ def main():
     start = next((a for a in sys.argv[1:] if not a.startswith("-")), None) or app.pending
     if start:
         w.load(start)
-    sys.exit(app.exec())
+    code = app.exec()
+    for th in list(_THREADS):  # an update check still running
+        th.wait(10000)
+    sys.exit(code)
 
 
 if __name__ == "__main__":
